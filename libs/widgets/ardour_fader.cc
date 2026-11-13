@@ -19,6 +19,7 @@
  */
 
 
+#include <cmath>
 #include <iostream>
 #include <assert.h>
 
@@ -277,13 +278,30 @@ ArdourFader::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t
 	// after a stroke of 2px width results in an outline of 1px
 	cairo_stroke_preserve(cr);
 
+	/* JXMP hardware fader: dark well, narrow slot, cap at the current level */
+	const bool hw_cap = _orien == VERT && !CairoWidget::flat_buttons () && CairoWidget::hardware_widgets ();
+
 	if (_orien == VERT) {
 
 		if (ds > h - FADER_RESERVE - CORNER_OFFSET) {
 			ds = h - FADER_RESERVE - CORNER_OFFSET;
 		}
 
-		if (!CairoWidget::flat_buttons()) {
+		if (hw_cap) {
+			cairo_set_source_rgb (cr, 0x0D / 255.0, 0x0E / 255.0, 0x10 / 255.0);
+			cairo_fill (cr);
+			const double sw = std::max (2.0, std::min (4.0, w * 0.25));
+			const double sx = floor ((w - sw) * .5);
+			/* slot */
+			Gtkmm2ext::rounded_rectangle (cr, sx, CORNER_OFFSET + 2, sw, h - CORNER_SIZE - 4, sw * .5);
+			cairo_set_source_rgb (cr, 0x05 / 255.0, 0x05 / 255.0, 0x06 / 255.0);
+			cairo_fill (cr);
+			/* level, in the fader's own colour, inside the slot */
+			if (ds < h - CORNER_SIZE - 2) {
+				Gtkmm2ext::rounded_rectangle (cr, sx, ds + CORNER_OFFSET, sw, h - ds - CORNER_SIZE - 2, sw * .5);
+				CairoWidget::set_source_rgb_a (cr, fg_color (get_state ()), 0.9);
+			}
+		} else if (!CairoWidget::flat_buttons()) {
 			cairo_set_source (cr, _pattern);
 			cairo_matrix_init_translate (&matrix, 0, (h - ds));
 			cairo_pattern_set_matrix (_pattern, &matrix);
@@ -346,6 +364,38 @@ ArdourFader::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t
 				cairo_stroke (cr);
 			}
 		}
+	}
+
+	if (hw_cap) {
+		const double cw = std::max<double> (6.0, w - 2 * CORNER_OFFSET - 2);
+		const double ch = std::max<double> (8.0, std::min<double> (18.0, cw * 0.75));
+		const double cx = (w - cw) * .5;
+		const double cy = std::max<double> (CORNER_OFFSET + 1.0, std::min<double> (h - CORNER_OFFSET - 1.0 - ch, ds + CORNER_OFFSET - ch * .5));
+		/* shadow */
+		Gtkmm2ext::rounded_rectangle (cr, cx + 1, cy + 2.5, cw, ch, 2);
+		cairo_set_source_rgba (cr, 0, 0, 0, 0.5);
+		cairo_fill (cr);
+		/* cap */
+		cairo_pattern_t* cap = cairo_pattern_create_linear (0, cy, 0, cy + ch);
+		cairo_pattern_add_color_stop_rgb (cap, 0, 0x99 / 255.0, 0x9C / 255.0, 0xA2 / 255.0);
+		cairo_pattern_add_color_stop_rgb (cap, 1, 0x46 / 255.0, 0x48 / 255.0, 0x4C / 255.0);
+		Gtkmm2ext::rounded_rectangle (cr, cx, cy, cw, ch, 2);
+		cairo_set_source (cr, cap);
+		cairo_fill (cr);
+		cairo_pattern_destroy (cap);
+		/* grip lines and the white centre line */
+		cairo_set_line_width (cr, 1);
+		cairo_set_source_rgba (cr, 0, 0, 0, 0.35);
+		cairo_move_to (cr, cx + 2, round (cy + ch * .2) + .5);
+		cairo_line_to (cr, cx + cw - 2, round (cy + ch * .2) + .5);
+		cairo_move_to (cr, cx + 2, round (cy + ch * .8) - .5);
+		cairo_line_to (cr, cx + cw - 2, round (cy + ch * .8) - .5);
+		cairo_stroke (cr);
+		cairo_set_line_width (cr, 1.4);
+		cairo_set_source_rgb (cr, 0xF2 / 255.0, 0xF2 / 255.0, 0xF2 / 255.0);
+		cairo_move_to (cr, cx + 1.5, cy + ch * .5);
+		cairo_line_to (cr, cx + cw - 1.5, cy + ch * .5);
+		cairo_stroke (cr);
 	}
 
 	if (_layout && !_text.empty() && _orien == HORIZ) {

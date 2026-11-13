@@ -2324,7 +2324,7 @@ Editor::set_state (const XMLNode& node, int version)
 	show_editor_mixer_action->set_active (!yn);
 	show_editor_mixer_action->set_active (yn);
 
-	yn = false;
+	yn = true; /* right zone (editor list) visible by default */
 	node.get_property ("show-editor-list", yn);
 	show_editor_list_action->set_active (!yn); // ditto
 	show_editor_list_action->set_active (yn);

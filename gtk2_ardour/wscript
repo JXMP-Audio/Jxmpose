@@ -188,6 +188,7 @@ gtk2_ardour_sources = [
         'missing_plugin_dialog.cc',
         'mixer_group_tabs.cc',
         'mixer_strip.cc',
+        'mixer_strip_decor.cc',
         'mixer_ui.cc',
         'meterbridge.cc',
         'meter_strip.cc',
@@ -879,6 +880,17 @@ def build(bld):
     obj.install_path = bld.env['CONFDIR']
     set_subst_dict(obj, font_subst_dict)
 
+    # JXMP look: Barlow (bundled in fonts/, SIL OFL)
+    font_subst_dict['FONTFAMILY'] = 'Barlow'
+
+    obj              = bld(features = 'subst')
+    obj.source       = [ 'clearlooks.rc.in' ]
+    obj.target       = 'clearlooks.barlow.rc'
+    obj.install_path = bld.env['CONFDIR']
+    set_subst_dict(obj, font_subst_dict)
+
+    font_subst_dict['FONTFAMILY'] = 'ArdourSans'
+
     obj              = bld(features = 'subst')
     obj.source       = [ 'default_ui_config.in' ]
     obj.target       = 'default_ui_config'
@@ -997,6 +1009,8 @@ def build(bld):
     bld.install_files(os.path.join (bld.env['DATADIR'], 'icons'), bld.path.ant_glob('icons/*.png'))
     bld.install_files(bld.env['DATADIR'], 'ArdourMono.ttf')
     bld.install_files(bld.env['DATADIR'], 'ArdourSans.ttf')
+    bld.install_files(os.path.join (bld.env['DATADIR'], 'fonts'), bld.path.ant_glob('fonts/*.ttf'))
+    bld.install_files(os.path.join (bld.env['DATADIR'], 'fonts'), bld.path.ant_glob('fonts/OFL-*.txt'))
 
     # Application/Product specific resources (icon, splash)
     pgmname = bld.env['PROGRAM_NAME']

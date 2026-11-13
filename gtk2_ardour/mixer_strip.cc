@@ -80,6 +80,7 @@
 #include "context_menu_helper.h"
 #include "enums_convert.h"
 #include "mixer_strip.h"
+#include "mixer_strip_decor.h"
 #include "mixer_ui.h"
 #include "keyboard.h"
 #include "public_editor.h"
@@ -334,6 +335,7 @@ MixerStrip::init ()
 
 	global_vpacker.pack_start (width_hide_box, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (name_button, Gtk::PACK_SHRINK);
+	global_vpacker.pack_start (_decor_stripe, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (input_button_box, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (invert_button_box, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (_tmaster_widget, Gtk::PACK_SHRINK);
@@ -363,6 +365,10 @@ MixerStrip::init ()
 #ifndef MIXBUS
 	global_vpacker.pack_end (spacer, false, false);
 #endif
+
+	_decor_stripe.set_size_request (-1, 6);
+	_decor_stripe.set_no_show_all ();
+	_decor_stripe.signal_expose_event ().connect (sigc::mem_fun (*this, &MixerStrip::decor_stripe_expose));
 
 	global_frame.add (global_vpacker);
 	global_frame.set_shadow_type (Gtk::SHADOW_IN);
@@ -773,6 +779,7 @@ MixerStrip::set_route (std::shared_ptr<Route> rt)
 	gpm.gain_automation_state_button.show();
 
 	parameter_changed ("mixer-element-visibility");
+	update_decor ();
 	map_frozen();
 
 	show ();
@@ -1068,6 +1075,7 @@ MixerStrip::route_color_changed ()
 	Gtkmm2ext::Color c (gdk_color_to_rgba (color()));
 	number_label.set_fixed_colors (c, c);
 	reset_strip_style ();
+	_decor_stripe.queue_draw ();
 }
 
 void
@@ -1882,7 +1890,55 @@ MixerStrip::parameter_changed (string p)
 		/* XXX do something or get rid of this parameter */
 	} else if (p == "use-route-color-widely") {
 		reset_strip_style ();
+	} else if (p == "mixer-strip-patina") {
+		update_decor ();
 	}
+}
+
+void
+MixerStrip::update_decor ()
+{
+	const bool yn = UIConfiguration::instance().get_mixer_strip_patina ();
+	/* when on, we paint the strip background ourselves (see on_expose_event) */
+	set_app_paintable (yn);
+	_decor_stripe.set_visible (yn);
+	queue_draw ();
+}
+
+bool
+MixerStrip::decor_stripe_expose (GdkEventExpose* ev)
+{
+	Gtk::Allocation const a = _decor_stripe.get_allocation ();
+	cairo_t* cr = gdk_cairo_create (_decor_stripe.get_window ()->gobj ());
+	gdk_cairo_region (cr, ev->region);
+	cairo_clip (cr);
+	Gtkmm2ext::Color c = route () ? Gtkmm2ext::gdk_color_to_rgba (color ()) : 0x5b6ee1ff;
+	MixerStripDecor::draw_stripe (cr, 0, 0, a.get_width (), a.get_height (), c);
+	cairo_destroy (cr);
+	return true;
+}
+
+bool
+MixerStrip::on_expose_event (GdkEventExpose* ev)
+{
+	if (!get_app_paintable () || !get_window ()) {
+		return EventBox::on_expose_event (ev);
+	}
+
+	/* panel paint, then wear; the child widgets are drawn on top by the EventBox handler */
+	cairo_t* cr = gdk_cairo_create (get_window ()->gobj ());
+	gdk_cairo_region (cr, ev->region);
+	cairo_clip (cr);
+
+	Gdk::Color const bg = get_style ()->get_bg (Gtk::STATE_NORMAL);
+	cairo_set_source_rgb (cr, bg.get_red_p (), bg.get_green_p (), bg.get_blue_p ());
+	cairo_paint (cr);
+
+	const uint32_t seed = MixerStripDecor::seed_for (route () ? route ()->id ().to_s () : name ());
+	MixerStripDecor::draw_patina (cr, get_width (), get_height (), seed, UIConfiguration::instance ().get_ui_scale ());
+	cairo_destroy (cr);
+
+	return EventBox::on_expose_event (ev);
 }
 
 /** Called to decide whether the solo isolate / solo lock button visibility should

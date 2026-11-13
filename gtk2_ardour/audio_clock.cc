@@ -220,6 +220,9 @@ AudioClock::set_colors ()
 	/* rescale for Pango colors ... sigh */
 
 	UINT_TO_RGBA (text_color, &r, &g, &b, &a);
+	text_r = r/255.0;
+	text_g = g/255.0;
+	text_b = b/255.0;
 	r = lrint ((r/255.0) * 65535.0);
 	g = lrint ((g/255.0) * 65535.0);
 	b = lrint ((b/255.0) * 65535.0);
@@ -274,6 +277,20 @@ AudioClock::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 		cairo_fill (cr);
 	}
 
+	/* JXMP: the clock is a vacuum-fluorescent display behind glass */
+	const bool vfd = _need_bg && hardware_widgets () && !flat_buttons ();
+
+	if (vfd) {
+		/* glass faintly tinted by the lit colour */
+		if (corner_radius) {
+			Gtkmm2ext::rounded_rectangle (cr, 0, 0, get_width(), get_height(), corner_radius);
+		} else {
+			cairo_rectangle (cr, 0, 0, get_width(), get_height());
+		}
+		cairo_set_source_rgba (cr, text_r, text_g, text_b, 0.06);
+		cairo_fill (cr);
+	}
+
 	double lw = layout_width * xscale;
 	double lh = layout_height * yscale;
 
@@ -284,10 +301,45 @@ AudioClock::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 		cairo_scale (cr, xscale, yscale);
 	}
 
+	if (vfd) {
+		/* soft glow under the sharp digits */
+		double x0, y0;
+		cairo_get_current_point (cr, &x0, &y0);
+		pango_cairo_layout_path (cr, _layout->gobj());
+		cairo_set_line_join (cr, CAIRO_LINE_JOIN_ROUND);
+		cairo_set_line_width (cr, 3.0);
+		cairo_set_source_rgba (cr, text_r, text_g, text_b, 0.18);
+		cairo_stroke (cr);
+		cairo_move_to (cr, x0, y0);
+	}
+
 	pango_cairo_show_layout (cr, _layout->gobj());
 
 	if (xscale != 1.0 || yscale != 1.0) {
 		cairo_restore (cr);
+	}
+
+	if (vfd) {
+		/* glare on the upper part of the glass, and a bezel set into the panel */
+		cairo_pattern_t* glare = cairo_pattern_create_linear (0, 0, 0, get_height() * .42);
+		cairo_pattern_add_color_stop_rgba (glare, 0, 1, 1, 1, 0.07);
+		cairo_pattern_add_color_stop_rgba (glare, 1, 1, 1, 1, 0);
+		cairo_rectangle (cr, 0, 0, get_width(), get_height() * .42);
+		cairo_set_source (cr, glare);
+		cairo_fill (cr);
+		cairo_pattern_destroy (glare);
+
+		cairo_set_line_width (cr, 1);
+		cairo_set_source_rgba (cr, 0, 0, 0, 0.8);
+		cairo_move_to (cr, 0.5, get_height() - 1);
+		cairo_line_to (cr, 0.5, 0.5);
+		cairo_line_to (cr, get_width() - 1, 0.5);
+		cairo_stroke (cr);
+		cairo_set_source_rgba (cr, 1, 1, 1, 0.08);
+		cairo_move_to (cr, get_width() - 0.5, 1);
+		cairo_line_to (cr, get_width() - 0.5, get_height() - 0.5);
+		cairo_line_to (cr, 1, get_height() - 0.5);
+		cairo_stroke (cr);
 	}
 
 	if (editing) {

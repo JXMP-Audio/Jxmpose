@@ -314,6 +314,7 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 
 	const bool boxy = (_tweaks & ForceBoxy) | boxy_buttons ();
 	const bool flat = (_tweaks & ForceFlat) | flat_buttons ();
+	const bool rubber = !flat && hardware_widgets ();
 
 	const float scale = UIConfigurationBase::instance().get_ui_scale();
 
@@ -446,7 +447,7 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 
 	//show the "convex" or "concave" gradient
 	if (!flat && (_elements & Body)==Body) {
-		const bool use_concave = 0 == (_tweaks & NoConcave);
+		const bool use_concave = 0 == (_tweaks & NoConcave) && !rubber;
 		if (use_concave && active_state() == Gtkmm2ext::ExplicitActive && (!((_elements & Indicator)==Indicator) || use_custom_led_color)) {
 			// concave
 			cairo_set_source (cr, concave_pattern);
@@ -456,6 +457,17 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 			cairo_set_source (cr, convex_pattern);
 			rounded_function (cr, padding_left, padding_top, get_width() - (padding_left + padding_right), get_height() - (padding_top + padding_bottom), corner_radius);
 			cairo_fill (cr);
+		}
+		if (rubber) {
+			/* light from top-left: a soft highlight on the upper half, stronger when lit */
+			const double hl = active_state() == Gtkmm2ext::ExplicitActive ? 0.16 : 0.07;
+			cairo_pattern_t* rubber_pattern = cairo_pattern_create_linear (0.0, 0, 0.0, get_height());
+			cairo_pattern_add_color_stop_rgba (rubber_pattern, 0.0, 1, 1, 1, hl);
+			cairo_pattern_add_color_stop_rgba (rubber_pattern, 0.5, 1, 1, 1, 0.0);
+			cairo_set_source (cr, rubber_pattern);
+			rounded_function (cr, padding_left, padding_top, get_width() - (padding_left + padding_right), get_height() - (padding_top + padding_bottom), corner_radius);
+			cairo_fill (cr);
+			cairo_pattern_destroy (rubber_pattern);
 		}
 	}
 
@@ -701,6 +713,25 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 		Gtkmm2ext::set_source_rgba (cr, led_color);
 		cairo_arc (cr, 0, 0, _diameter * .5 - 3 * scale, 0, 2 * M_PI);
 		cairo_fill(cr);
+
+		if (rubber) {
+			if (active_state () == Gtkmm2ext::ExplicitActive) {
+				/* lit LED: soft halo in its own colour */
+				double r, g, b, a;
+				Gtkmm2ext::color_to_rgba (led_color, r, g, b, a);
+				cairo_pattern_t* halo = cairo_pattern_create_radial (0, 0, _diameter * .2, 0, 0, _diameter * .75);
+				cairo_pattern_add_color_stop_rgba (halo, 0, r, g, b, 0.45);
+				cairo_pattern_add_color_stop_rgba (halo, 1, r, g, b, 0);
+				cairo_set_source (cr, halo);
+				cairo_arc (cr, 0, 0, _diameter * .75, 0, 2 * M_PI);
+				cairo_fill (cr);
+				cairo_pattern_destroy (halo);
+			}
+			/* specular dot, light from top-left */
+			cairo_set_source_rgba (cr, 1, 1, 1, 0.35);
+			cairo_arc (cr, -_diameter * .12, -_diameter * .12, std::max (0.8, _diameter * .1), 0, 2 * M_PI);
+			cairo_fill (cr);
+		}
 
 		cairo_restore (cr);
 	}

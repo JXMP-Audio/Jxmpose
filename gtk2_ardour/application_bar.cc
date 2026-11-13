@@ -213,13 +213,9 @@ ApplicationBar::on_parent_changed (Gtk::Widget*)
 	int col = 0;
 #define TCOL col, col + 1
 
-	_table.attach (_transport_ctrl, TCOL, 0, 1 , SHRINK, SHRINK, 0, 0);
-	_table.attach (*ssbox,         TCOL, 1, 2 , FILL,   SHRINK, 0, 0);
-	++col;
-
-	_table.attach (_recpunch_spacer, TCOL, 0, 2 , SHRINK, EXPAND|FILL, 3, 0);
-	++col;
-
+	/* Three groups (left: record setup, centre: transport + clocks, right: status),
+	 * separated by the expanding _left_hbox and _transport_hbox.
+	 */
 	_table.attach (_punch_label, TCOL, 0, 1 , FILL, SHRINK, 3, 0);
 	_table.attach (_layered_label, TCOL, 1, 2 , FILL, SHRINK, 3, 0);
 	++col;
@@ -241,6 +237,13 @@ ApplicationBar::on_parent_changed (Gtk::Widget*)
 
 	_left_hbox.set_spacing (3);
 	_table.attach (_left_hbox, TCOL, 0, 2, EXPAND|FILL, EXPAND|FILL, hpadding, 0);
+	++col;
+
+	_table.attach (_recpunch_spacer, TCOL, 0, 2 , SHRINK, EXPAND|FILL, 3, 0);
+	++col;
+
+	_table.attach (_transport_ctrl, TCOL, 0, 1 , SHRINK, SHRINK, 0, 0);
+	_table.attach (*ssbox,         TCOL, 1, 2 , FILL,   SHRINK, 0, 0);
 	++col;
 
 	_table.attach (_primary_clock_spacer, TCOL, 0, 2 , SHRINK, EXPAND|FILL, 3, 0);

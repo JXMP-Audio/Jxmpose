@@ -2494,6 +2494,19 @@ private:
 	Gtk::Label* _note_name;
 };
 
+static bool
+set_ui_font_rc_file (std::string const& rc)
+{
+	std::string family = X_("Sans");
+	if (rc == X_("clearlooks.ardoursans.rc")) {
+		family = X_("ArdourSans");
+	} else if (rc == X_("clearlooks.barlow.rc")) {
+		family = X_("Barlow");
+	}
+	UIConfiguration::instance().set_ui_font_family (family);
+	return UIConfiguration::instance().set_ui_rc_file (rc);
+}
+
 RCOptionEditor::RCOptionEditor ()
 	: OptionEditorContainer (Config)
 	  /* pack self-as-vbox into tabbable */
@@ -2686,6 +2699,34 @@ RCOptionEditor::RCOptionEditor ()
 				_("Draw \"boxy\" buttons"),
 				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_boxy_buttons),
 				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_boxy_buttons)
+				));
+
+	{
+		/* the GTK rc file sets the widget font, ui-font-family the Cairo/canvas font */
+		ComboOption<std::string>* fo = new ComboOption<std::string> (
+				"ui-rc-file", _("Interface font"),
+				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_ui_rc_file),
+				sigc::ptr_fun (&set_ui_font_rc_file)
+				);
+		fo->add (X_("clearlooks.rc"), _("System default"));
+		fo->add (X_("clearlooks.ardoursans.rc"), X_("ArdourSans"));
+		fo->add (X_("clearlooks.barlow.rc"), X_("Barlow"));
+		Gtkmm2ext::UI::instance()->set_tip (fo->tip_widget(), _("Font used for buttons, labels and the editor canvas. Some text only changes after a restart."));
+		add_option (_("Appearance"), fo);
+	}
+
+	add_option (_("Appearance"), new BoolOption (
+				"hardware-widgets",
+				_("Hardware-style widgets (rubber buttons, ridged knobs, fader caps, VFD clocks)"),
+				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_hardware_widgets),
+				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_hardware_widgets)
+				));
+
+	add_option (_("Appearance"), new BoolOption (
+				"mixer-strip-patina",
+				_("Draw mixer strips as worn hardware panels"),
+				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_mixer_strip_patina),
+				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_mixer_strip_patina)
 				));
 
 	add_option (_("Appearance"), new BoolOption (

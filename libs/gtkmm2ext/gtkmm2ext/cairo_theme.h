@@ -31,6 +31,7 @@ public:
 	static void set_flat_buttons (bool yn);
 	static void set_boxy_buttons (bool yn);
 	static void set_widget_prelight (bool yn);
+	static void set_hardware_widgets (bool yn);
 
 	static bool flat_buttons ()
 	{
@@ -47,10 +48,17 @@ public:
 		return _widget_prelight;
 	}
 
+	/* JXMP hardware look: rubber buttons, ridged knobs, fader caps, VFD clocks, toolbar bevel */
+	static bool hardware_widgets ()
+	{
+		return _hardware_widgets;
+	}
+
 private:
 	static bool _flat_buttons;
 	static bool _boxy_buttons;
 	static bool _widget_prelight;
+	static bool _hardware_widgets;
 };
 
 } // namespace Gtkmm2ext

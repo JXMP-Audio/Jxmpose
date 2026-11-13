@@ -265,82 +265,153 @@ ArdourKnob::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 #endif
 	}
 
-	if (!flat) {
-		/* knob shadow */
-		cairo_save (cr);
-		cairo_translate (cr, pointer_thickness + 1, pointer_thickness + 1);
-		cairo_set_source_rgba (cr, 0, 0, 0, 0.1);
-		cairo_arc (cr, 0, 0, center_radius - 1, 0, 2.0 * G_PI);
+	if (!flat && hardware_widgets ()) {
+		/* JXMP hardware knob: ridged black body, coloured cap, printed pointer */
+		const float r = center_radius;
+
+		/* drop shadow, light from top-left */
+		cairo_pattern_t* p = cairo_pattern_create_radial (0.08 * r, 0.16 * r, 0.7 * r, 0.08 * r, 0.16 * r, 1.1 * r);
+		cairo_pattern_add_color_stop_rgba (p, 0, 0, 0, 0, 0.55);
+		cairo_pattern_add_color_stop_rgba (p, 1, 0, 0, 0, 0);
+		cairo_set_source (cr, p);
+		cairo_arc (cr, 0.08 * r, 0.16 * r, 1.1 * r, 0, 2.0 * G_PI);
 		cairo_fill (cr);
-		cairo_restore (cr);
+		cairo_pattern_destroy (p);
 
-		/* inner circle */
-		Gtkmm2ext::set_source_rgba (cr, knob_color);
-		cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
+		/* ridged body */
+		p = cairo_pattern_create_linear (0, -r, 0, r);
+		cairo_pattern_add_color_stop_rgb (p, 0, 0x34 / 255.0, 0x35 / 255.0, 0x39 / 255.0);
+		cairo_pattern_add_color_stop_rgb (p, 1, 0x0C / 255.0, 0x0C / 255.0, 0x0E / 255.0);
+		cairo_set_source (cr, p);
+		cairo_arc (cr, 0, 0, r, 0, 2.0 * G_PI);
 		cairo_fill (cr);
+		cairo_pattern_destroy (p);
 
-		if (bevel) {
-			/* knob gradient */
-			cairo_pattern_t* shade_pattern;
-			shade_pattern = cairo_pattern_create_linear (0.0, -yc, 0.0, yc);
-			cairo_pattern_add_color_stop_rgba (shade_pattern, 0.0, 1, 1, 1, 0.2);
-			cairo_pattern_add_color_stop_rgba (shade_pattern, 0.2, 1, 1, 1, 0.2);
-			cairo_pattern_add_color_stop_rgba (shade_pattern, 0.8, 0, 0, 0, 0.2);
-			cairo_pattern_add_color_stop_rgba (shade_pattern, 1.0, 0, 0, 0, 0.2);
-			cairo_set_source (cr, shade_pattern);
-			cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
-			cairo_fill (cr);
-			cairo_pattern_destroy (shade_pattern);
-
-			/* flat top over beveled edge */
-			Gtkmm2ext::set_source_rgb_a (cr, knob_color, 0.5);
-			cairo_arc (cr, 0, 0, center_radius - pointer_thickness, 0, 2.0 * G_PI);
-			cairo_fill (cr);
-		} else {
-			/* radial gradient */
-			cairo_pattern_t* shade_pattern;
-			shade_pattern = cairo_pattern_create_radial (-center_radius, -center_radius, 1, -center_radius, -center_radius, center_radius * 2.5);
-			cairo_pattern_add_color_stop_rgba (shade_pattern, 0.0, 1, 1, 1, 0.2);
-			cairo_pattern_add_color_stop_rgba (shade_pattern, 1.0, 0, 0, 0, 0.3);
-			cairo_set_source (cr, shade_pattern);
-			cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
-			cairo_fill (cr);
-			cairo_pattern_destroy (shade_pattern);
+		const int n_ridges = std::max (12, (int) (r * 1.5));
+		cairo_set_line_width (cr, std::max (0.6f, 0.05f * r));
+		for (int i = 0; i < n_ridges; ++i) {
+			const double a = i * 2.0 * G_PI / n_ridges;
+			cairo_move_to (cr, 0.8 * r * cos (a), 0.8 * r * sin (a));
+			cairo_line_to (cr, 0.98 * r * cos (a), 0.98 * r * sin (a));
+			cairo_set_source_rgba (cr, 1, 1, 1, sin (a) < 0 ? 0.10 : 0.04);
+			cairo_stroke (cr);
 		}
 
-	} else {
-		/* inner circle */
-		Gtkmm2ext::set_source_rgba (cr, knob_color);
-		cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
+		/* cap */
+		double cr_, cg, cb, ca;
+		Gtkmm2ext::color_to_rgba (knob_color, cr_, cg, cb, ca);
+		const float capr = 0.72 * r;
+		p = cairo_pattern_create_linear (0, -capr, 0, capr);
+		cairo_pattern_add_color_stop_rgb (p, 0, std::min (1.0, cr_ + 0.10), std::min (1.0, cg + 0.10), std::min (1.0, cb + 0.10));
+		cairo_pattern_add_color_stop_rgb (p, 1, cr_ * 0.72, cg * 0.72, cb * 0.72);
+		cairo_set_source (cr, p);
+		cairo_arc (cr, 0, 0, capr, 0, 2.0 * G_PI);
+		cairo_fill_preserve (cr);
+		cairo_pattern_destroy (p);
+		cairo_set_source_rgba (cr, 0, 0, 0, 0.55);
+		cairo_set_line_width (cr, 0.6);
+		cairo_stroke (cr);
+
+		/* gloss */
+		p = cairo_pattern_create_radial (-0.35 * capr, -0.45 * capr, 0, -0.35 * capr, -0.45 * capr, capr);
+		cairo_pattern_add_color_stop_rgba (p, 0, 1, 1, 1, 0.32);
+		cairo_pattern_add_color_stop_rgba (p, 1, 1, 1, 1, 0);
+		cairo_set_source (cr, p);
+		cairo_arc (cr, 0, 0, capr, 0, 2.0 * G_PI);
 		cairo_fill (cr);
-	}
+		cairo_pattern_destroy (p);
 
-	/* black knob border */
-	cairo_set_line_width (cr, border_width);
-	cairo_set_source_rgba (cr, 0, 0, 0, 1);
-	cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
-	cairo_stroke (cr);
+		/* pointer: dark on light caps, white on dark caps */
+		const bool light_cap = (cr_ + cg + cb) / 3.0 > 0.6;
+		if (light_cap) {
+			cairo_set_source_rgb (cr, 0x18 / 255.0, 0x18 / 255.0, 0x1A / 255.0);
+		} else {
+			cairo_set_source_rgb (cr, 0xF4 / 255.0, 0xF4 / 255.0, 0xF4 / 255.0);
+		}
+		cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
+		cairo_set_line_width (cr, std::max (1.3f, 0.13f * r));
+		cairo_move_to (cr, 0.15 * r * value_x, 0.15 * r * value_y);
+		cairo_line_to (cr, 0.92 * r * value_x, 0.92 * r * value_y);
+		cairo_stroke (cr);
 
-	/* line shadow */
-	if (!flat) {
-		cairo_save (cr);
-		cairo_translate (cr, 1, 1);
-		cairo_set_source_rgba (cr, 0, 0, 0, 0.3);
+	} else {
+		if (!flat) {
+			/* knob shadow */
+			cairo_save (cr);
+			cairo_translate (cr, pointer_thickness + 1, pointer_thickness + 1);
+			cairo_set_source_rgba (cr, 0, 0, 0, 0.1);
+			cairo_arc (cr, 0, 0, center_radius - 1, 0, 2.0 * G_PI);
+			cairo_fill (cr);
+			cairo_restore (cr);
+
+			/* inner circle */
+			Gtkmm2ext::set_source_rgba (cr, knob_color);
+			cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
+			cairo_fill (cr);
+
+			if (bevel) {
+				/* knob gradient */
+				cairo_pattern_t* shade_pattern;
+				shade_pattern = cairo_pattern_create_linear (0.0, -yc, 0.0, yc);
+				cairo_pattern_add_color_stop_rgba (shade_pattern, 0.0, 1, 1, 1, 0.2);
+				cairo_pattern_add_color_stop_rgba (shade_pattern, 0.2, 1, 1, 1, 0.2);
+				cairo_pattern_add_color_stop_rgba (shade_pattern, 0.8, 0, 0, 0, 0.2);
+				cairo_pattern_add_color_stop_rgba (shade_pattern, 1.0, 0, 0, 0, 0.2);
+				cairo_set_source (cr, shade_pattern);
+				cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
+				cairo_fill (cr);
+				cairo_pattern_destroy (shade_pattern);
+
+				/* flat top over beveled edge */
+				Gtkmm2ext::set_source_rgb_a (cr, knob_color, 0.5);
+				cairo_arc (cr, 0, 0, center_radius - pointer_thickness, 0, 2.0 * G_PI);
+				cairo_fill (cr);
+			} else {
+				/* radial gradient */
+				cairo_pattern_t* shade_pattern;
+				shade_pattern = cairo_pattern_create_radial (-center_radius, -center_radius, 1, -center_radius, -center_radius, center_radius * 2.5);
+				cairo_pattern_add_color_stop_rgba (shade_pattern, 0.0, 1, 1, 1, 0.2);
+				cairo_pattern_add_color_stop_rgba (shade_pattern, 1.0, 0, 0, 0, 0.3);
+				cairo_set_source (cr, shade_pattern);
+				cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
+				cairo_fill (cr);
+				cairo_pattern_destroy (shade_pattern);
+			}
+
+		} else {
+			/* inner circle */
+			Gtkmm2ext::set_source_rgba (cr, knob_color);
+			cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
+			cairo_fill (cr);
+		}
+
+		/* black knob border */
+		cairo_set_line_width (cr, border_width);
+		cairo_set_source_rgba (cr, 0, 0, 0, 1);
+		cairo_arc (cr, 0, 0, center_radius, 0, 2.0 * G_PI);
+		cairo_stroke (cr);
+
+		/* line shadow */
+		if (!flat) {
+			cairo_save (cr);
+			cairo_translate (cr, 1, 1);
+			cairo_set_source_rgba (cr, 0, 0, 0, 0.3);
+			cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
+			cairo_set_line_width (cr, pointer_thickness);
+			cairo_move_to (cr, (center_radius * value_x), (center_radius * value_y));
+			cairo_line_to (cr, ((center_radius * 0.4) * value_x), ((center_radius * 0.4) * value_y));
+			cairo_stroke (cr);
+			cairo_restore (cr);
+		}
+
+		/* line */
+		cairo_set_source_rgba (cr, 1, 1, 1, 1);
 		cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
 		cairo_set_line_width (cr, pointer_thickness);
 		cairo_move_to (cr, (center_radius * value_x), (center_radius * value_y));
 		cairo_line_to (cr, ((center_radius * 0.4) * value_x), ((center_radius * 0.4) * value_y));
 		cairo_stroke (cr);
-		cairo_restore (cr);
 	}
-
-	/* line */
-	cairo_set_source_rgba (cr, 1, 1, 1, 1);
-	cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
-	cairo_set_line_width (cr, pointer_thickness);
-	cairo_move_to (cr, (center_radius * value_x), (center_radius * value_y));
-	cairo_line_to (cr, ((center_radius * 0.4) * value_x), ((center_radius * 0.4) * value_y));
-	cairo_stroke (cr);
 
 	/* a transparent overlay to indicate insensitivity */
 	if (!get_sensitive ()) {

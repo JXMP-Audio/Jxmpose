@@ -24,6 +24,7 @@ using namespace Gtkmm2ext;
 bool CairoTheme::_flat_buttons    = false;
 bool CairoTheme::_boxy_buttons    = false;
 bool CairoTheme::_widget_prelight = true;
+bool CairoTheme::_hardware_widgets  = false;
 
 void
 CairoTheme::set_flat_buttons (bool yn)
@@ -41,4 +42,10 @@ void
 CairoTheme::set_widget_prelight (bool yn)
 {
 	_widget_prelight = yn;
+}
+
+void
+CairoTheme::set_hardware_widgets (bool yn)
+{
+	_hardware_widgets = yn;
 }

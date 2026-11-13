@@ -30,6 +30,7 @@
 #endif
 
 #include "gtkmm2ext/actions.h"
+#include "gtkmm2ext/cairo_theme.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/utils.h"
 #include "gtkmm2ext/visibility_tracker.h"
@@ -42,6 +43,49 @@ using std::string;
 using namespace Gtk;
 using namespace Gtkmm2ext;
 using namespace ArdourWidgets;
+
+/* JXMP hardware look: the header (application bar) reads as a 1U unit,
+ * a vertical bevel from slightly lighter to slightly darker than the theme background,
+ * with a dark separator line at the bottom.
+ */
+static bool
+paint_header_bevel (GdkEventExpose* ev, Gtk::EventBox* box)
+{
+	if (!CairoTheme::hardware_widgets () || CairoTheme::flat_buttons () || !box->get_window ()) {
+		return false;
+	}
+
+	Gtk::Allocation const a = box->get_allocation ();
+	Gdk::Color const bg = box->get_style ()->get_bg (Gtk::STATE_NORMAL);
+	const double r = bg.get_red_p (), g = bg.get_green_p (), b = bg.get_blue_p ();
+
+	cairo_t* cr = gdk_cairo_create (box->get_window ()->gobj ());
+	gdk_cairo_region (cr, ev->region);
+	cairo_clip (cr);
+
+	cairo_pattern_t* p = cairo_pattern_create_linear (0, 0, 0, a.get_height ());
+	cairo_pattern_add_color_stop_rgb (p, 0, std::min (1.0, r * 1.12 + .02), std::min (1.0, g * 1.12 + .02), std::min (1.0, b * 1.12 + .02));
+	cairo_pattern_add_color_stop_rgb (p, 1, r * 0.82, g * 0.82, b * 0.82);
+	cairo_set_source (cr, p);
+	cairo_paint (cr);
+	cairo_pattern_destroy (p);
+
+	cairo_set_line_width (cr, 1);
+	cairo_set_source_rgba (cr, 1, 1, 1, 0.06);
+	cairo_move_to (cr, 0, 0.5);
+	cairo_line_to (cr, a.get_width (), 0.5);
+	cairo_stroke (cr);
+	cairo_set_source_rgba (cr, 0, 0, 0, 0.9);
+	cairo_move_to (cr, 0, a.get_height () - 0.5);
+	cairo_line_to (cr, a.get_width (), a.get_height () - 0.5);
+	cairo_stroke (cr);
+	cairo_destroy (cr);
+
+	if (box->get_child ()) {
+		box->propagate_expose (*box->get_child (), ev);
+	}
+	return true;
+}
 
 Tabbable::Tabbable (const string& visible_name, string const & nontranslatable_name, Widget* w, bool tabbed_by_default, PaneLayout pl)
 	: WindowProxy (visible_name, nontranslatable_name)
@@ -100,6 +144,10 @@ Tabbable::default_layout ()
 	left_attachment_button.set_sensitive (0 != (_panelayout & (PaneLeft | AttLeft)));
 	right_attachment_button.set_sensitive (0 != (_panelayout & PaneRight));
 	bottom_attachment_button.set_sensitive (0 != (_panelayout & (PaneBottom | AttBottom)));
+
+	content_app_bar.signal_expose_event ().connect (sigc::bind (sigc::ptr_fun (&paint_header_bevel), &content_app_bar), false);
+	content_attachments.signal_expose_event ().connect (sigc::bind (sigc::ptr_fun (&paint_header_bevel), &content_attachments), false);
+	content_tabbables.signal_expose_event ().connect (sigc::bind (sigc::ptr_fun (&paint_header_bevel), &content_tabbables), false);
 
 	content_header_hbox.pack_start (content_app_bar, true, true);
 	content_header_hbox.pack_start (content_attachments, false, false);

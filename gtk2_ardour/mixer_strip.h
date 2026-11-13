@@ -33,6 +33,7 @@
 #include <ytkmm/adjustment.h>
 #include <ytkmm/button.h>
 #include <ytkmm/box.h>
+#include <ytkmm/drawingarea.h>
 #include <ytkmm/eventbox.h>
 #include <ytkmm/frame.h>
 #include <ytkmm/label.h>
@@ -190,6 +191,12 @@ private:
 
 	Gtk::Frame          global_frame;
 	Gtk::VBox           global_vpacker;
+
+	/* JXMP panel look ("mixer-strip-patina"): route-colour stripe + wear */
+	Gtk::DrawingArea    _decor_stripe;
+	bool decor_stripe_expose (GdkEventExpose*);
+	bool on_expose_event (GdkEventExpose*);
+	void update_decor ();
 
 	ProcessorBox processor_box;
 	GainMeter    gpm;
