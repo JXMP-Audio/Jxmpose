@@ -114,6 +114,11 @@ NagScreen::maybe_nag (std::string why)
 	bool really_subscribed;
 	bool maybe_subscribed;
 
+	/* JXMPOSE is free software without subscriptions: never nag */
+	if (true) {
+		return 0;
+	}
+
 	path = Glib::build_filename (user_config_directory(), ".nevernag");
 
 	if (Glib::file_test (path, Glib::FILE_TEST_EXISTS)) {

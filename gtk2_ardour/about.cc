@@ -37,6 +37,7 @@
 #include "ardour/revision.h"
 #include "ardour/filesystem_paths.h"
 
+#include "jxmpose_urls.h"
 #include "about.h"
 #include "configinfo.h"
 #include "rgb_macros.h"
@@ -645,11 +646,12 @@ About::About ()
 #endif
 
 	set_translator_credits (t);
-	set_copyright (_("Copyright (C) 1999-2026 Paul Davis\n"));
+	set_copyright (_("Copyright (C) 2026 JXMP Audio\nBased on Ardour, Copyright (C) 1999-2026 Paul Davis and contributors\n"));
+	set_comments (_("JXMPOSE is a digital audio workstation based on Ardour (https://ardour.org/).\nIt is not affiliated with or endorsed by the Ardour project."));
 	set_license (gpl);
-	set_name (X_("Ardour"));
-	set_website (X_("https://ardour.org/"));
-	set_website_label (_("http://ardour.org/"));
+	set_name (X_(PROGRAM_NAME));
+	set_website (X_(JXMPOSE_URL_HOME));
+	set_website_label (_("github.com/JXMP-Audio/Jxmpose"));
 	set_version ((string_compose(_("%1%2\n(rev %3)\n%4%5"),
 				     VERSIONSTRING,
 				     codename,

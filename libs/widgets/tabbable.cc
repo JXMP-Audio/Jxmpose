@@ -85,10 +85,12 @@ paint_header_bevel (GdkEventExpose* ev, Gtk::EventBox* box)
 		cairo_stroke (cr);
 	}
 
+	/* separator towards the editor: below a header, above a bottom bar (studio) */
+	const double sep_y = studio ? 0.5 : a.get_height () - 0.5;
 	cairo_set_line_width (cr, 1);
 	cairo_set_source_rgba (cr, 0, 0, 0, studio ? 0.6 : 0.9);
-	cairo_move_to (cr, 0, a.get_height () - 0.5);
-	cairo_line_to (cr, a.get_width (), a.get_height () - 0.5);
+	cairo_move_to (cr, 0, sep_y);
+	cairo_line_to (cr, a.get_width (), sep_y);
 	cairo_stroke (cr);
 	cairo_destroy (cr);
 
@@ -170,7 +172,12 @@ Tabbable::default_layout ()
 	toolbar_frame->set_name ("TransportFrame");
 	toolbar_frame->add (content_header_hbox);
 
-	_content_vbox.pack_start (*toolbar_frame, false, false);
+	if (CairoTheme::studio_widgets ()) {
+		/* studio look: transport and clocks live in a bar at the bottom of the window */
+		_content_vbox.pack_end (*toolbar_frame, false, false);
+	} else {
+		_content_vbox.pack_start (*toolbar_frame, false, false);
+	}
 
 	if (_panelayout & PaneLeft) {
 		_content_vbox.pack_start (content_left_pane, true, true);

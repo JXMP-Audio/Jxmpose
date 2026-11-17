@@ -905,8 +905,10 @@ def options(opt):
                     help='Compile without support for LRDF LADSPA data even if present')
     opt.add_option('--no-nls', action='store_true', default=False, dest='no_nls',
                     help='Disable i18n (native language support)')
-    opt.add_option('--no-phone-home', action='store_true', default=False, dest='no_phone_home',
-                   help='Do not contact ardour.org at startup for new announcements')
+    opt.add_option('--no-phone-home', action='store_true', default=True, dest='no_phone_home',
+                   help='Do not contact ardour.org at startup for new announcements (JXMPOSE default)')
+    opt.add_option('--phone-home', action='store_false', dest='no_phone_home',
+                   help='Contact ardour.org at startup for new announcements')
     opt.add_option('--stl-debug', action='store_true', default=False, dest='stl_debug',
                     help='Build with debugging for the STL')
     opt.add_option('--rt-alloc-debug', action='store_true', default=False, dest='rt_alloc_debug',

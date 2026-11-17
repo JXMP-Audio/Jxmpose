@@ -38,6 +38,7 @@
 #include "processor_box.h"
 #endif
 
+#include "jxmpose_urls.h"
 #include "opts.h"
 
 #include "pbd/i18n.h"
@@ -93,8 +94,8 @@ print_help (const char *execname)
 		<< _("  -T, --template <name>       Use given template for new session\n")
 		<< _("  -v, --version               Print version and exit\n")
 		<< "\n\n"
-		<< _("Report bugs to http://tracker.ardour.org\n")
-		<< _("Website http://ardour.org\n")
+		<< _("Report bugs to " JXMPOSE_URL_ISSUES "\n")
+		<< _("Website " JXMPOSE_URL_HOME "\n")
 		;
 	return 1;
 }
