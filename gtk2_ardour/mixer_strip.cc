@@ -29,6 +29,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <sstream>
 #include <cmath>
 #include <list>
 #include <algorithm>
@@ -1080,6 +1081,10 @@ MixerStrip::route_color_changed ()
 	name_button.modify_bg (STATE_NORMAL, color());
 	Gtkmm2ext::Color c (gdk_color_to_rgba (color()));
 	number_label.set_fixed_colors (c, c);
+	if (_inspector_layout) {
+		/* studio look: channel name field in the track colour */
+		name_button.set_fixed_colors (c, c);
+	}
 	reset_strip_style ();
 	_decor_stripe.queue_draw ();
 }
@@ -1485,6 +1490,7 @@ public:
 	void toggle ()
 	{
 		state ()[_key] = !is_open ();
+		save_state ();
 		changed ().emit (_key);
 	}
 
@@ -1507,10 +1513,32 @@ public:
 	}
 
 private:
+	/* open/closed state, kept in the UI config as a comma separated list of closed keys */
 	static std::map<std::string, bool>& state ()
 	{
 		static std::map<std::string, bool> s;
+		static bool loaded = false;
+		if (!loaded) {
+			loaded = true;
+			std::stringstream ss (UIConfiguration::instance ().get_studio_closed_sections ());
+			std::string k;
+			while (std::getline (ss, k, ',')) {
+				if (!k.empty ()) {
+					s[k] = false;
+				}
+			}
+		}
 		return s;
+	}
+	static void save_state ()
+	{
+		std::string closed;
+		for (auto const& i : state ()) {
+			if (!i.second) {
+				closed += (closed.empty () ? "" : ",") + i.first;
+			}
+		}
+		UIConfiguration::instance ().set_studio_closed_sections (closed);
 	}
 	static sigc::signal<void, std::string>& changed ()
 	{
