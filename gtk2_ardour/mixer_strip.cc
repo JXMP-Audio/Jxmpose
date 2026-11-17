@@ -878,7 +878,7 @@ MixerStrip::set_width_enum (Width w, void* owner)
 
 		{
 			// panners expect an even number of horiz. pixels
-			int width = rintf (max ((_inspector_layout && _embedded ? 180.f : 110.f) * scale, gpm.get_gm_width() + 10.f * scale)) + 1;
+			int width = rintf (max ((_inspector_layout && _embedded ? 125.f : 110.f) * scale, gpm.get_gm_width() + 10.f * scale)) + 1;
 			width &= ~1;
 			set_size_request (width, -1);
 		}
