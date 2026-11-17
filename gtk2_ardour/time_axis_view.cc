@@ -1376,6 +1376,10 @@ TimeAxisView::preset_height (Height h)
 	case HeightLarge:
 		return (button_height * 2) + extra_height + PX_SCALE (60);
 	case HeightNormal:
+		if (UIConfiguration::instance ().get_widget_style () == X_("studio")) {
+			/* studio look: compact single-row tracks by default */
+			return button_height + extra_height + PX_SCALE (4);
+		}
 		return (button_height * 2) + extra_height + 10;
 	case HeightSmall:
 		return button_height + extra_height;
@@ -1383,6 +1387,12 @@ TimeAxisView::preset_height (Height h)
 
 	abort(); /* NOTREACHED */
 	return 0;
+}
+
+uint32_t
+TimeAxisView::two_row_height ()
+{
+	return (button_height * 2) + extra_height + 10;
 }
 
 /** @return Child time axis views that are not hidden */

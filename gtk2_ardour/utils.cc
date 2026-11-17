@@ -49,6 +49,7 @@
 #include <ytkmm/window.h>
 
 #include "pbd/basename.h"
+#include "pbd/convert.h"
 #include "pbd/file_utils.h"
 
 #include "ardour/audioengine.h"
@@ -419,6 +420,13 @@ ARDOUR_UI_UTILS::get_color_themes (map<std::string, std::string>& themes)
 			}
 
 			std::string color_name = basename_nosuffix (*e);
+
+			/* only offer themes made for this program (e.g. "*-jxmpose.colors") */
+			std::string const program_suffix = std::string ("-") + PBD::downcase (std::string (PROGRAM_NAME));
+			if (color_name.size () <= program_suffix.size () || color_name.compare (color_name.size () - program_suffix.size (), program_suffix.size (), program_suffix) != 0) {
+				continue;
+			}
+
 			size_t      sep        = color_name.find_first_of ("-");
 			if (sep != string::npos) {
 				color_name = color_name.substr (0, sep);

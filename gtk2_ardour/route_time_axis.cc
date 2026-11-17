@@ -106,6 +106,15 @@ using std::list;
 
 sigc::signal<void, bool> RouteTimeAxisView::signal_ctrl_touched;
 
+/* JXMP studio look: track headers with a full-height colour column on the left,
+ * M/S grouped before the name and record at the right (applied when the header is built).
+ */
+static bool
+studio_track_header ()
+{
+	return !ARDOUR::Profile->get_mixbus () && UIConfiguration::instance ().get_widget_style () == X_("studio");
+}
+
 RouteTimeAxisView::RouteTimeAxisView (PublicEditor& ed, Session* sess, ArdourCanvas::Canvas& canvas)
 	: RouteUI(sess)
 	, StripableTimeAxisView(ed, sess, canvas)
@@ -114,6 +123,8 @@ RouteTimeAxisView::RouteTimeAxisView (PublicEditor& ed, Session* sess, ArdourCan
 	, route_group_button (S_("RTAV|G"))
 	, playlist_button (S_("RTAV|P"))
 	, automation_button (S_("RTAV|A"))
+	, auto_read_button (S_("Automation|R"))
+	, auto_write_button (S_("Automation|W"))
 	, automation_action_menu (0)
 	, plugins_submenu_item (0)
 	, route_group_menu (0)
@@ -184,13 +195,46 @@ RouteTimeAxisView::set_route (std::shared_ptr<Route> rt)
 	playlist_button.signal_button_press_event().connect (sigc::mem_fun(*this, &RouteTimeAxisView::playlist_click), false);
 	automation_button.signal_button_press_event().connect (sigc::mem_fun(*this, &RouteTimeAxisView::automation_click), false);
 
+	/* header columns: [number] [name] [rec] [mute] [solo] (Ardour),
+	 * or (colour column) [M] [S] [R] [W] [name] [rec] in a single row (studio look);
+	 * the studio second row [A] [P] [gain] [G] only shows on taller tracks.
+	 */
+	const bool studio = studio_track_header ();
+	const int  c_rec  = ARDOUR::Profile->get_mixbus () ? 0 : (studio ? 5 : 2);
+	const int  c_mute = ARDOUR::Profile->get_mixbus () ? 1 : (studio ? 0 : 3);
+	const int  c_solo = ARDOUR::Profile->get_mixbus () ? 2 : (studio ? 1 : 4);
+
+	if (studio) {
+		if (name_label.get_parent () == &controls_table) {
+			controls_table.remove (name_label);
+		}
+		controls_table.attach (name_label, 4, 5, 0, 1, Gtk::FILL|Gtk::EXPAND, Gtk::SHRINK, 2, 0);
+
+		auto_read_button.set_name ("transport button");    /* lit green */
+		auto_write_button.set_name ("record enable button"); /* lit red */
+		auto_read_button.set_tweaks (ArdourButton::TrackHeader);
+		auto_write_button.set_tweaks (ArdourButton::TrackHeader);
+		set_tooltip (auto_read_button, _("Read automation (volume, trim, mute, pan)"));
+		set_tooltip (auto_write_button, _("Write automation (touch)"));
+		auto_read_button.signal_button_press_event ().connect (sigc::mem_fun (*this, &RouteTimeAxisView::auto_read_press), false);
+		auto_write_button.signal_button_press_event ().connect (sigc::mem_fun (*this, &RouteTimeAxisView::auto_write_press), false);
+		controls_button_size_group->add_widget (auto_read_button);
+		controls_button_size_group->add_widget (auto_write_button);
+		controls_table.attach (auto_read_button, 2, 3, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
+		controls_table.attach (auto_write_button, 3, 4, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
+		auto_read_button.show ();
+		auto_write_button.show ();
+
+		std::shared_ptr<AutomationControl> gc = _route->gain_control ();
+		if (gc && gc->alist ()) {
+			gc->alist ()->automation_state_changed.connect (auto_state_connections, invalidator (*this), std::bind (&RouteTimeAxisView::update_auto_rw_buttons, this), gui_context ());
+		}
+		update_auto_rw_buttons ();
+	}
+
 	if (is_track()) {
 
-		if (ARDOUR::Profile->get_mixbus()) {
-			controls_table.attach (*rec_enable_button, 0, 1, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
-		} else {
-			controls_table.attach (*rec_enable_button, 2, 3, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
-		}
+		controls_table.attach (*rec_enable_button, c_rec, c_rec + 1, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 
 		if (is_midi_track()) {
 			set_tooltip(*rec_enable_button, _("Record (Right-click for Step Edit)"));
@@ -208,11 +252,7 @@ RouteTimeAxisView::set_route (std::shared_ptr<Route> rt)
 		gm.set_fader_name ("AudioBusFader");
 		Gtk::Fixed *blank = manage(new Gtk::Fixed());
 		controls_button_size_group->add_widget(*blank);
-		if (ARDOUR::Profile->get_mixbus() ) {
-			controls_table.attach (*blank, 0, 1, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
-		} else {
-			controls_table.attach (*blank, 2, 3, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
-		}
+		controls_table.attach (*blank, c_rec, c_rec + 1, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 		blank->show();
 	}
 
@@ -231,33 +271,33 @@ RouteTimeAxisView::set_route (std::shared_ptr<Route> rt)
 	_route->output()->changed.connect (*this, invalidator (*this), std::bind (&RouteTimeAxisView::io_changed, this, _1), gui_context());
 	_route->track_number_changed.connect (*this, invalidator (*this), std::bind (&RouteTimeAxisView::label_view, this), gui_context());
 
-	if (ARDOUR::Profile->get_mixbus()) {
-		controls_table.attach (*mute_button, 1, 2, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
+	if (studio && _route->is_master ()) {
+		/* studio look: no mute on the master, keep the column aligned */
+		Gtk::Fixed *blank = manage (new Gtk::Fixed ());
+		controls_button_size_group->add_widget (*blank);
+		controls_table.attach (*blank, c_mute, c_mute + 1, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
+		blank->show ();
 	} else {
-		controls_table.attach (*mute_button, 3, 4, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
+		controls_table.attach (*mute_button, c_mute, c_mute + 1, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 	}
 	// mute button is always present, it is used to
 	// force the 'blank' placeholders to the proper size
 	controls_button_size_group->add_widget(*mute_button);
 
 	if (!_route->is_master()) {
-		if (ARDOUR::Profile->get_mixbus()) {
-			controls_table.attach (*solo_button, 2, 3, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
-		} else {
-			controls_table.attach (*solo_button, 4, 5, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
-		}
+		controls_table.attach (*solo_button, c_solo, c_solo + 1, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 	} else {
 		Gtk::Fixed *blank = manage(new Gtk::Fixed());
 		controls_button_size_group->add_widget(*blank);
-		if (ARDOUR::Profile->get_mixbus()) {
-			controls_table.attach (*blank, 2, 3, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
-		} else {
-			controls_table.attach (*blank, 4, 5, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
-		}
+		controls_table.attach (*blank, c_solo, c_solo + 1, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 		blank->show();
 	}
 
-	if (ARDOUR::Profile->get_mixbus()) {
+	if (studio) {
+		/* second row: [A] [P] [gain ............] [G] */
+		controls_table.attach (route_group_button, 5, 6, 2, 3, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
+		controls_table.attach (gm.get_gain_slider(), 2, 5, 2, 3, Gtk::FILL|Gtk::EXPAND, Gtk::FILL|Gtk::EXPAND, 1, 0);
+	} else if (ARDOUR::Profile->get_mixbus()) {
 		controls_table.attach (route_group_button, 2, 3, 2, 3, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 		controls_table.attach (gm.get_gain_slider(), 3, 5, 2, 3, Gtk::FILL|Gtk::EXPAND, Gtk::FILL|Gtk::EXPAND, 1, 0);
 	} else {
@@ -286,14 +326,18 @@ RouteTimeAxisView::set_route (std::shared_ptr<Route> rt)
 	route_active_changed();
 	label_view ();
 
-	if (ARDOUR::Profile->get_mixbus()) {
+	if (studio) {
+		controls_table.attach (automation_button, 0, 1, 2, 3, Gtk::SHRINK, Gtk::SHRINK);
+	} else if (ARDOUR::Profile->get_mixbus()) {
 		controls_table.attach (automation_button, 1, 2, 2, 3, Gtk::SHRINK, Gtk::SHRINK);
 	} else {
 		controls_table.attach (automation_button, 3, 4, 2, 3, Gtk::SHRINK, Gtk::SHRINK);
 	}
 
 	if (is_track() && track()->mode() == ARDOUR::Normal) {
-		if (ARDOUR::Profile->get_mixbus()) {
+		if (studio) {
+			controls_table.attach (playlist_button, 1, 2, 2, 3, Gtk::SHRINK, Gtk::SHRINK);
+		} else if (ARDOUR::Profile->get_mixbus()) {
 			controls_table.attach (playlist_button, 0, 1, 2, 3, Gtk::SHRINK, Gtk::SHRINK);
 		} else {
 			controls_table.attach (playlist_button, 2, 3, 2, 3, Gtk::SHRINK, Gtk::SHRINK);
@@ -450,9 +494,11 @@ void
 RouteTimeAxisView::update_track_number_visibility ()
 {
 	DisplaySuspender ds;
-	bool show_label = _session->config.get_track_name_number();
+	const bool studio = studio_track_header ();
+	/* the studio look always shows the colour column, the number is optional */
+	bool show_label = studio || _session->config.get_track_name_number();
 
-	if (_route && _route->is_master()) {
+	if (_route && _route->is_master() && !studio) {
 		show_label = false;
 	}
 
@@ -462,6 +508,12 @@ RouteTimeAxisView::update_track_number_visibility ()
 	if (show_label) {
 		if (!_route->active()) {
 			inactive_table.attach (number_label, 0, 1, 0, 1, Gtk::SHRINK, Gtk::EXPAND|Gtk::FILL, 1, 0);
+		} else if (studio) {
+			/* flush, narrow colour strip at the very left of the header, full height, no number */
+			number_label.set_elements ((ArdourButton::Element)(ArdourButton::Body|ArdourButton::Inactive));
+			number_label.set_corner_radius (0);
+			top_hbox.pack_start (number_label, false, false, 0);
+			top_hbox.reorder_child (number_label, 0);
 		} else if (ARDOUR::Profile->get_mixbus()) {
 			controls_table.attach (number_label, 3, 4, 0, 1, Gtk::SHRINK, Gtk::EXPAND|Gtk::FILL, 1, 0);
 		} else {
@@ -472,6 +524,9 @@ RouteTimeAxisView::update_track_number_visibility ()
 		// need to explicitly calculate it anyway until the name-label & entry become ArdourWidgets.
 		int tnw = (2 + std::max(2u, _session->track_number_decimals())) * number_label.char_pixel_width();
 		if (tnw & 1) --tnw;
+		if (studio) {
+			tnw = std::max (4, (int) rintf (6.f * UIConfiguration::instance ().get_ui_scale ()));
+		}
 		number_label.set_size_request(tnw, -1);
 		number_label.show ();
 	} else {
@@ -1068,7 +1123,9 @@ RouteTimeAxisView::set_height (uint32_t h, TrackHeightMode m, bool from_idle)
 		_view->set_height ((double) current_height());
 	}
 
-	if (height >= preset_height (HeightNormal)) {
+	const uint32_t full_header = studio_track_header () ? two_row_height () : preset_height (HeightNormal);
+
+	if (height >= full_header) {
 
 		reset_meter();
 
@@ -1116,6 +1173,57 @@ RouteTimeAxisView::set_height (uint32_t h, TrackHeightMode m, bool from_idle)
 		/* only emit the signal if the height really changed */
 		request_redraw ();
 	}
+}
+
+void
+RouteTimeAxisView::set_route_automation_state (AutoState as)
+{
+	std::shared_ptr<AutomationControl> ctrls[] = {
+		_route->gain_control (),
+		_route->trim_control (),
+		_route->mute_control (),
+		_route->pan_azimuth_control (),
+		_route->pan_width_control (),
+	};
+	for (auto const& c : ctrls) {
+		if (c && c->alist ()) {
+			c->set_automation_state (as);
+		}
+	}
+}
+
+void
+RouteTimeAxisView::update_auto_rw_buttons ()
+{
+	std::shared_ptr<AutomationControl> gc = _route ? _route->gain_control () : std::shared_ptr<AutomationControl> ();
+	const AutoState as = gc ? gc->automation_state () : ARDOUR::Off;
+	const bool writing = (as == ARDOUR::Write || as == ARDOUR::Touch || as == ARDOUR::Latch);
+	auto_read_button.set_active_state ((as == ARDOUR::Play || writing) ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
+	auto_write_button.set_active_state (writing ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
+}
+
+bool
+RouteTimeAxisView::auto_read_press (GdkEventButton* ev)
+{
+	if (ev->button != 1) {
+		return false;
+	}
+	const bool reading = auto_read_button.active_state () == Gtkmm2ext::ExplicitActive;
+	/* R off also stops writing, R on reads */
+	set_route_automation_state (reading ? ARDOUR::Off : ARDOUR::Play);
+	return true;
+}
+
+bool
+RouteTimeAxisView::auto_write_press (GdkEventButton* ev)
+{
+	if (ev->button != 1) {
+		return false;
+	}
+	const bool writing = auto_write_button.active_state () == Gtkmm2ext::ExplicitActive;
+	/* W on writes in touch mode (and reads), W off keeps reading */
+	set_route_automation_state (writing ? ARDOUR::Play : ARDOUR::Touch);
+	return true;
 }
 
 void

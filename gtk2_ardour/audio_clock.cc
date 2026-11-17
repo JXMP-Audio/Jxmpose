@@ -267,14 +267,25 @@ AudioClock::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 	cairo_t* cr = ctx->cobj();
 	/* main layout: rounded rect, plus the text */
 
+	/* JXMP studio look: flat display panel, small corners, hairline frame */
+	const bool studio = _need_bg && studio_widgets ();
+	const double cradius = studio ? std::min (corner_radius, 2.0) : corner_radius;
+
 	if (_need_bg) {
 		cairo_set_source_rgba (cr, bg_r, bg_g, bg_b, bg_a);
-		if (corner_radius) {
-			Gtkmm2ext::rounded_rectangle (cr, 0, 0, get_width(), get_height(), corner_radius);
+		if (cradius) {
+			Gtkmm2ext::rounded_rectangle (cr, 0, 0, get_width(), get_height(), cradius);
 		} else {
 			cairo_rectangle (cr, 0, 0, get_width(), get_height());
 		}
 		cairo_fill (cr);
+	}
+
+	if (studio) {
+		cairo_set_line_width (cr, 1);
+		cairo_set_source_rgba (cr, 1, 1, 1, 0.07);
+		Gtkmm2ext::rounded_rectangle (cr, .5, .5, get_width() - 1, get_height() - 1, cradius);
+		cairo_stroke (cr);
 	}
 
 	/* JXMP: the clock is a vacuum-fluorescent display behind glass */
@@ -383,8 +394,8 @@ AudioClock::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 	}
 
 	if (UIConfigurationBase::instance().get_widget_prelight() && (_hovering || editing)) {
-		if (corner_radius) {
-			Gtkmm2ext::rounded_rectangle (cr, 0, 0, get_width(), get_height(), corner_radius);
+		if (cradius) {
+			Gtkmm2ext::rounded_rectangle (cr, 0, 0, get_width(), get_height(), cradius);
 		} else {
 			cairo_rectangle (cr, 0, 0, get_width(), get_height());
 		}

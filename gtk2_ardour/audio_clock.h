@@ -254,7 +254,7 @@ private:
 
 	double bg_r, bg_g, bg_b, bg_a;
 	double cursor_r, cursor_g, cursor_b, cursor_a;
-	double text_r, text_g, text_b; /* VFD glow (hardware-widgets) */
+	double text_r, text_g, text_b; /* VFD glow (widget-style "hardware") */
 
 	double xscale;
 	double yscale;

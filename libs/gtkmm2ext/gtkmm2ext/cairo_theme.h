@@ -28,10 +28,17 @@ namespace Gtkmm2ext
 class LIBGTKMM2EXT_API CairoTheme
 {
 public:
+	/* JXMP widget looks, selected by the "widget-style" UI config variable */
+	enum WidgetStyle {
+		StyleArdour,   /* stock Ardour rendering */
+		StyleHardware, /* rubber buttons, ridged knobs, fader caps, VFD clocks, toolbar bevel */
+		StyleStudio,   /* flat modern studio look: thin borders, value rings, slim faders */
+	};
+
 	static void set_flat_buttons (bool yn);
 	static void set_boxy_buttons (bool yn);
 	static void set_widget_prelight (bool yn);
-	static void set_hardware_widgets (bool yn);
+	static void set_widget_style (WidgetStyle);
 
 	static bool flat_buttons ()
 	{
@@ -48,17 +55,26 @@ public:
 		return _widget_prelight;
 	}
 
-	/* JXMP hardware look: rubber buttons, ridged knobs, fader caps, VFD clocks, toolbar bevel */
+	static WidgetStyle widget_style ()
+	{
+		return _widget_style;
+	}
+
 	static bool hardware_widgets ()
 	{
-		return _hardware_widgets;
+		return _widget_style == StyleHardware;
+	}
+
+	static bool studio_widgets ()
+	{
+		return _widget_style == StyleStudio;
 	}
 
 private:
 	static bool _flat_buttons;
 	static bool _boxy_buttons;
 	static bool _widget_prelight;
-	static bool _hardware_widgets;
+	static WidgetStyle _widget_style;
 };
 
 } // namespace Gtkmm2ext

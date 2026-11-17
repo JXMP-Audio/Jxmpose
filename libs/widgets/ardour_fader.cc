@@ -280,6 +280,10 @@ ArdourFader::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t
 
 	/* JXMP hardware fader: dark well, narrow slot, cap at the current level */
 	const bool hw_cap = _orien == VERT && !CairoWidget::flat_buttons () && CairoWidget::hardware_widgets ();
+	/* JXMP studio fader: flat well, slim coloured track, flat grey cap with an index line */
+	const bool studio = CairoWidget::studio_widgets ();
+	const bool studio_cap = _orien == VERT && studio;
+	const bool flat = CairoWidget::flat_buttons () || studio;
 
 	if (_orien == VERT) {
 
@@ -287,7 +291,21 @@ ArdourFader::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t
 			ds = h - FADER_RESERVE - CORNER_OFFSET;
 		}
 
-		if (hw_cap) {
+		if (studio_cap) {
+			cairo_set_source_rgb (cr, 0x1A / 255.0, 0x1B / 255.0, 0x1E / 255.0);
+			cairo_fill (cr);
+			const double sw = std::max (2.0, std::min (3.0, w * 0.2));
+			const double sx = floor ((w - sw) * .5);
+			/* track */
+			cairo_rectangle (cr, sx, CORNER_OFFSET + 2, sw, h - CORNER_SIZE - 4);
+			cairo_set_source_rgb (cr, 0x0B / 255.0, 0x0B / 255.0, 0x0D / 255.0);
+			cairo_fill (cr);
+			/* level, in the fader's own colour */
+			if (ds < h - CORNER_SIZE - 2) {
+				cairo_rectangle (cr, sx, ds + CORNER_OFFSET, sw, h - ds - CORNER_SIZE - 2);
+				CairoWidget::set_source_rgb_a (cr, fg_color (get_state ()), 1);
+			}
+		} else if (hw_cap) {
 			cairo_set_source_rgb (cr, 0x0D / 255.0, 0x0E / 255.0, 0x10 / 255.0);
 			cairo_fill (cr);
 			const double sw = std::max (2.0, std::min (4.0, w * 0.25));
@@ -301,7 +319,7 @@ ArdourFader::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t
 				Gtkmm2ext::rounded_rectangle (cr, sx, ds + CORNER_OFFSET, sw, h - ds - CORNER_SIZE - 2, sw * .5);
 				CairoWidget::set_source_rgb_a (cr, fg_color (get_state ()), 0.9);
 			}
-		} else if (!CairoWidget::flat_buttons()) {
+		} else if (!flat) {
 			cairo_set_source (cr, _pattern);
 			cairo_matrix_init_translate (&matrix, 0, (h - ds));
 			cairo_pattern_set_matrix (_pattern, &matrix);
@@ -331,7 +349,7 @@ ArdourFader::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t
 		 * thus: translation = (w - ds)
 		 */
 
-		if (!CairoWidget::flat_buttons() ) {
+		if (!flat) {
 			cairo_set_source (cr, _pattern);
 			cairo_matrix_init_translate (&matrix, w - ds, 0);
 			cairo_pattern_set_matrix (_pattern, &matrix);
@@ -364,6 +382,24 @@ ArdourFader::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t
 				cairo_stroke (cr);
 			}
 		}
+	}
+
+	if (studio_cap) {
+		const double cw = std::max<double> (6.0, w - 2 * CORNER_OFFSET - 2);
+		const double ch = std::max<double> (8.0, std::min<double> (16.0, cw * 0.6));
+		const double cx = round ((w - cw) * .5);
+		const double cy = round (std::max<double> (CORNER_OFFSET + 1.0, std::min<double> (h - CORNER_OFFSET - 1.0 - ch, ds + CORNER_OFFSET - ch * .5)));
+		/* cap body, slightly lighter on top */
+		Gtkmm2ext::rounded_rectangle (cr, cx, cy, cw, ch, 1.5);
+		cairo_set_source_rgb (cr, 0xA9 / 255.0, 0xAB / 255.0, 0xB0 / 255.0);
+		cairo_fill (cr);
+		cairo_rectangle (cr, cx + 1, cy, cw - 2, 1);
+		cairo_set_source_rgba (cr, 1, 1, 1, 0.35);
+		cairo_fill (cr);
+		/* index line */
+		cairo_rectangle (cr, cx + 2, round (cy + ch * .5) - 1, cw - 4, 2);
+		cairo_set_source_rgb (cr, 0x1A / 255.0, 0x1B / 255.0, 0x1E / 255.0);
+		cairo_fill (cr);
 	}
 
 	if (hw_cap) {

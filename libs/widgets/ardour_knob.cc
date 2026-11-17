@@ -190,18 +190,29 @@ ArdourKnob::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 
 	bool arc   = (_elements & Arc) == Arc;
 	bool bevel = (_elements & Bevel) == Bevel;
-	bool flat  = flat_buttons ();
+	bool studio = studio_widgets ();
+	bool flat   = flat_buttons () || studio;
+
+	if (studio) {
+		/* studio look: a slim disc inside a thin value ring */
+		center_radius = scale * (arc ? 0.34 : 0.44);
+	}
 
 	if (arc) {
-		center_radius = scale * 0.33;
+		center_radius = studio ? center_radius : scale * 0.33;
 
-		float inner_progress_radius = scale * 0.38;
+		float inner_progress_radius = scale * (studio ? 0.41 : 0.38);
 		float outer_progress_radius = scale * 0.48;
 		float progress_width        = (outer_progress_radius - inner_progress_radius);
 		float progress_radius       = inner_progress_radius + progress_width / 2.0;
 
 		/* dark arc background */
-		cairo_set_source_rgb (cr, 0.3, 0.3, 0.3);
+		if (studio) {
+			cairo_set_source_rgba (cr, 0, 0, 0, 0.45);
+			cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
+		} else {
+			cairo_set_source_rgb (cr, 0.3, 0.3, 0.3);
+		}
 		cairo_set_line_width (cr, progress_width);
 		cairo_arc (cr, 0, 0, progress_radius, start_angle, end_angle);
 		cairo_stroke (cr);
@@ -232,6 +243,7 @@ ArdourKnob::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 			cairo_arc (cr, 0, 0, progress_radius, zero_angle, value_angle);
 		}
 		cairo_stroke (cr);
+		cairo_set_line_cap (cr, CAIRO_LINE_CAP_BUTT);
 
 		/* shade the arc */
 		if (!flat) {
@@ -265,7 +277,34 @@ ArdourKnob::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*
 #endif
 	}
 
-	if (!flat && hardware_widgets ()) {
+	if (studio) {
+		/* studio knob: flat dark disc, faint rim, light pointer reaching the rim */
+		const float r = center_radius;
+		cairo_set_source_rgb (cr, 0x2B / 255.0, 0x2C / 255.0, 0x30 / 255.0);
+		cairo_arc (cr, 0, 0, r, 0, 2.0 * G_PI);
+		cairo_fill (cr);
+
+		cairo_set_line_width (cr, 1);
+		cairo_set_source_rgba (cr, 1, 1, 1, 0.12);
+		cairo_arc (cr, 0, 0, r - 0.5, 0, 2.0 * G_PI);
+		cairo_stroke (cr);
+
+		/* the theme's knob colour tints the pointer */
+		double kr, kg, kb, ka;
+		Gtkmm2ext::color_to_rgba (knob_color, kr, kg, kb, ka);
+		const double lum = (kr + kg + kb) / 3.0;
+		if (lum < 0.45) {
+			cairo_set_source_rgb (cr, 0.92, 0.92, 0.93);
+		} else {
+			cairo_set_source_rgb (cr, kr, kg, kb);
+		}
+		cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
+		cairo_set_line_width (cr, std::max (1.5f, 0.14f * r));
+		cairo_move_to (cr, 0.35 * r * value_x, 0.35 * r * value_y);
+		cairo_line_to (cr, 0.85 * r * value_x, 0.85 * r * value_y);
+		cairo_stroke (cr);
+
+	} else if (!flat && hardware_widgets ()) {
 		/* JXMP hardware knob: ridged black body, coloured cap, printed pointer */
 		const float r = center_radius;
 

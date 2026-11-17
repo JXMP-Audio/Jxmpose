@@ -313,7 +313,8 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 	uint32_t led_color;
 
 	const bool boxy = (_tweaks & ForceBoxy) | boxy_buttons ();
-	const bool flat = (_tweaks & ForceFlat) | flat_buttons ();
+	const bool studio = studio_widgets ();
+	const bool flat = (_tweaks & ForceFlat) | flat_buttons () | studio;
 	const bool rubber = !flat && hardware_widgets ();
 
 	const float scale = UIConfigurationBase::instance().get_ui_scale();
@@ -324,6 +325,10 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 		corner_radius = get_height() / 2. - 2 * scale;
 	} else if (corner_radius > 0) {
 		corner_radius = std::max(2.f, corner_radius * scale);
+	}
+	if (studio && corner_radius > 0) {
+		/* studio look: small, crisp corners */
+		corner_radius = std::max (1.f, 2.f * scale);
 	}
 	corner_radius = boxy ? 0 : corner_radius;
 
@@ -433,6 +438,16 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 			Gtkmm2ext::set_source_rgba (cr, fill_inactive_color);
 		}
 		cairo_fill (cr);
+	}
+
+	// studio look: a hairline highlight along the top edge instead of a gradient
+	if (studio && (_elements & Body)==Body && get_height() > 8 * scale) {
+		const double hl = active_state() == Gtkmm2ext::ExplicitActive ? 0.14 : 0.06;
+		cairo_set_line_width (cr, 1);
+		cairo_set_source_rgba (cr, 1, 1, 1, hl);
+		cairo_move_to (cr, padding_left + corner_radius, padding_top + .5);
+		cairo_line_to (cr, get_width() - padding_right - corner_radius, padding_top + .5);
+		cairo_stroke (cr);
 	}
 
 	// IMPLICIT ACTIVE: draw a border of the active color
@@ -704,15 +719,27 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 			cairo_fill (cr);
 		}
 
-		//black ring
-		cairo_set_source_rgb (cr, 0, 0, 0);
-		cairo_arc (cr, 0, 0, _diameter * .5 - 1 * scale, 0, 2 * M_PI);
-		cairo_fill(cr);
+		if (studio) {
+			/* flat dot, no ring; unlit LEDs recede into the body */
+			const double r = std::max (1.5, _diameter * .5 - 2 * scale);
+			if (active_state () == Gtkmm2ext::ExplicitActive || use_custom_led_color) {
+				Gtkmm2ext::set_source_rgba (cr, led_color);
+			} else {
+				Gtkmm2ext::set_source_rgb_a (cr, led_color, 0.35);
+			}
+			cairo_arc (cr, 0, 0, r, 0, 2 * M_PI);
+			cairo_fill (cr);
+		} else {
+			//black ring
+			cairo_set_source_rgb (cr, 0, 0, 0);
+			cairo_arc (cr, 0, 0, _diameter * .5 - 1 * scale, 0, 2 * M_PI);
+			cairo_fill(cr);
 
-		//led color
-		Gtkmm2ext::set_source_rgba (cr, led_color);
-		cairo_arc (cr, 0, 0, _diameter * .5 - 3 * scale, 0, 2 * M_PI);
-		cairo_fill(cr);
+			//led color
+			Gtkmm2ext::set_source_rgba (cr, led_color);
+			cairo_arc (cr, 0, 0, _diameter * .5 - 3 * scale, 0, 2 * M_PI);
+			cairo_fill(cr);
+		}
 
 		if (rubber) {
 			if (active_state () == Gtkmm2ext::ExplicitActive) {
@@ -751,7 +778,7 @@ ArdourButton::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_
 	if (UIConfigurationBase::instance().get_widget_prelight() && !((visual_state() & Gtkmm2ext::Insensitive))) {
 		if (_hovering) {
 			rounded_function (cr, padding_left, padding_top, get_width() - (padding_left + padding_right), get_height() - (padding_top + padding_bottom), corner_radius);
-			cairo_set_source_rgba (cr, 0.905, 0.917, 0.925, 0.2);
+			cairo_set_source_rgba (cr, 0.905, 0.917, 0.925, studio ? 0.09 : 0.2);
 			cairo_fill (cr);
 		}
 	}

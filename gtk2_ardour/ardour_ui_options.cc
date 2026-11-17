@@ -441,10 +441,16 @@ ARDOUR_UI::parameter_changed (std::string p)
 			gtk_rc_reset_styles (gtk_settings_get_default());
 			LV2Plugin::set_global_ui_style_boxy (boxy);
 		}
-	} else if (p == "hardware-widgets") {
-		bool hw = UIConfiguration::instance().get_hardware_widgets();
-		if (ArdourButton::hardware_widgets () != hw) {
-			ArdourButton::set_hardware_widgets (hw);
+	} else if (p == "widget-style") {
+		std::string const ws = UIConfiguration::instance().get_widget_style();
+		ArdourButton::WidgetStyle style = ArdourButton::StyleArdour;
+		if (ws == X_("hardware")) {
+			style = ArdourButton::StyleHardware;
+		} else if (ws == X_("studio")) {
+			style = ArdourButton::StyleStudio;
+		}
+		if (ArdourButton::widget_style () != style) {
+			ArdourButton::set_widget_style (style);
 			/* force a redraw */
 			gtk_rc_reset_styles (gtk_settings_get_default());
 		}

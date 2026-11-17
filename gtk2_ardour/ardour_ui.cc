@@ -83,6 +83,7 @@
 #include "widgets/prompter.h"
 #include "widgets/tooltips.h"
 
+#include "ardour/route_group.h"
 #include "ardour/ardour.h"
 #include "ardour/audio_backend.h"
 #include "ardour/audio_track.h"
@@ -2791,6 +2792,63 @@ ARDOUR_UI::add_route ()
 	add_route_dialog->present();
 }
 
+/* JXMPOSE: folders by track type. New tracks and busses that were not given a
+ * group go into "Audio", "MIDI", "Instruments" or "FX", created on demand.
+ * The groups only organise (no shared gain, mute, solo, selection or colour),
+ * and the user can move a track into any other group.
+ */
+static std::shared_ptr<RouteGroup>
+default_track_folder (Session* s, AddRouteDialog::TypeWanted type, PluginInfoPtr const& instrument)
+{
+	std::string name;
+	uint32_t    rgba;
+
+	switch (type) {
+	case AddRouteDialog::AudioTrack:
+		name = _("Audio");
+		rgba = 0x3f7fd9ff;
+		break;
+	case AddRouteDialog::MidiTrack:
+		if (instrument) {
+			name = _("Instruments");
+			rgba = 0xe6b922ff;
+		} else {
+			name = _("MIDI");
+			rgba = 0x49c46eff;
+		}
+		break;
+	case AddRouteDialog::AudioBus:
+	case AddRouteDialog::MidiBus:
+		name = _("FX");
+		rgba = 0x9b6bdfff;
+		break;
+	default:
+		return std::shared_ptr<RouteGroup> ();
+	}
+
+	std::shared_ptr<RouteGroup> g = s->route_group_by_name (name);
+	if (g) {
+		return g;
+	}
+
+	g = s->new_route_group (name);
+	if (!g) {
+		return g;
+	}
+	g->set_gain (false);
+	g->set_mute (false);
+	g->set_solo (false);
+	g->set_recenable (false);
+	g->set_sursend_enable (false);
+	g->set_select (false);
+	g->set_route_active (false);
+	g->set_color (false);
+	g->set_monitoring (false);
+	g->set_rgba (rgba);
+	s->add_route_group (g);
+	return g;
+}
+
 void
 ARDOUR_UI::add_route_dialog_response (int r)
 {
@@ -2858,6 +2916,10 @@ ARDOUR_UI::add_route_dialog_response (int r)
 	bool trigger_visibility = add_route_dialog->show_on_cue_page ();
 
 	AddRouteDialog::TypeWanted type = add_route_dialog->type_wanted ();
+
+	if (!route_group && _session && UIConfiguration::instance().get_auto_track_folders ()) {
+		route_group = default_track_folder (_session, type, instrument);
+	}
 
 	if (input_chan.n_total () == 0 && type != AddRouteDialog::VCAMaster) {
 		/* Custom */

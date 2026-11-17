@@ -2715,12 +2715,18 @@ RCOptionEditor::RCOptionEditor ()
 		add_option (_("Appearance"), fo);
 	}
 
-	add_option (_("Appearance"), new BoolOption (
-				"hardware-widgets",
-				_("Hardware-style widgets (rubber buttons, ridged knobs, fader caps, VFD clocks)"),
-				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_hardware_widgets),
-				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_hardware_widgets)
-				));
+	{
+		ComboOption<std::string>* ws = new ComboOption<std::string> (
+				"widget-style", _("Widget style"),
+				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_widget_style),
+				sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_widget_style)
+				);
+		ws->add (X_("ardour"), _("Classic"));
+		ws->add (X_("hardware"), _("Hardware (rubber buttons, ridged knobs, fader caps, VFD clocks)"));
+		ws->add (X_("studio"), _("Studio (default: flat, compact track headers)"));
+		Gtkmm2ext::UI::instance()->set_tip (ws->tip_widget(), _("How buttons, knobs, faders, clocks and the toolbar are drawn. The \"JXMPOSE Studio\" colour theme is designed for the Studio style. Track header layout changes after a restart."));
+		add_option (_("Appearance"), ws);
+	}
 
 	add_option (_("Appearance"), new BoolOption (
 				"mixer-strip-patina",
@@ -3490,6 +3496,14 @@ These settings will only take effect after %1 is restarted.\n\
 	add_option (_("Editor"), eet);
 
 	add_option (_("Editor"), new OptionEditorHeading (_("Editor Behavior")));
+
+	add_option (_("Editor"),
+	     new BoolOption (
+		     "auto-track-folders",
+		     _("Put new tracks and busses into folders by type (Audio, MIDI, Instruments, FX)"),
+		     sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_auto_track_folders),
+		     sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_auto_track_folders)
+		     ));
 
 	add_option (_("Editor"),
 	     new BoolOption (

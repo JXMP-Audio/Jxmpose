@@ -44,14 +44,18 @@ using namespace Gtk;
 using namespace Gtkmm2ext;
 using namespace ArdourWidgets;
 
-/* JXMP hardware look: the header (application bar) reads as a 1U unit,
- * a vertical bevel from slightly lighter to slightly darker than the theme background,
- * with a dark separator line at the bottom.
+/* JXMP header (application bar) painting.
+ * Hardware look: the header reads as a 1U unit, a vertical bevel from slightly
+ * lighter to slightly darker than the theme background.
+ * Studio look: a flat toolbar band a little darker than the background.
+ * Both end in a dark separator line at the bottom.
  */
 static bool
 paint_header_bevel (GdkEventExpose* ev, Gtk::EventBox* box)
 {
-	if (!CairoTheme::hardware_widgets () || CairoTheme::flat_buttons () || !box->get_window ()) {
+	const bool studio = CairoTheme::studio_widgets ();
+	const bool hardware = CairoTheme::hardware_widgets () && !CairoTheme::flat_buttons ();
+	if ((!studio && !hardware) || !box->get_window ()) {
 		return false;
 	}
 
@@ -63,19 +67,26 @@ paint_header_bevel (GdkEventExpose* ev, Gtk::EventBox* box)
 	gdk_cairo_region (cr, ev->region);
 	cairo_clip (cr);
 
-	cairo_pattern_t* p = cairo_pattern_create_linear (0, 0, 0, a.get_height ());
-	cairo_pattern_add_color_stop_rgb (p, 0, std::min (1.0, r * 1.12 + .02), std::min (1.0, g * 1.12 + .02), std::min (1.0, b * 1.12 + .02));
-	cairo_pattern_add_color_stop_rgb (p, 1, r * 0.82, g * 0.82, b * 0.82);
-	cairo_set_source (cr, p);
-	cairo_paint (cr);
-	cairo_pattern_destroy (p);
+	if (studio) {
+		cairo_set_source_rgb (cr, r * 0.86, g * 0.86, b * 0.86);
+		cairo_paint (cr);
+	} else {
+		cairo_pattern_t* p = cairo_pattern_create_linear (0, 0, 0, a.get_height ());
+		cairo_pattern_add_color_stop_rgb (p, 0, std::min (1.0, r * 1.12 + .02), std::min (1.0, g * 1.12 + .02), std::min (1.0, b * 1.12 + .02));
+		cairo_pattern_add_color_stop_rgb (p, 1, r * 0.82, g * 0.82, b * 0.82);
+		cairo_set_source (cr, p);
+		cairo_paint (cr);
+		cairo_pattern_destroy (p);
+
+		cairo_set_line_width (cr, 1);
+		cairo_set_source_rgba (cr, 1, 1, 1, 0.06);
+		cairo_move_to (cr, 0, 0.5);
+		cairo_line_to (cr, a.get_width (), 0.5);
+		cairo_stroke (cr);
+	}
 
 	cairo_set_line_width (cr, 1);
-	cairo_set_source_rgba (cr, 1, 1, 1, 0.06);
-	cairo_move_to (cr, 0, 0.5);
-	cairo_line_to (cr, a.get_width (), 0.5);
-	cairo_stroke (cr);
-	cairo_set_source_rgba (cr, 0, 0, 0, 0.9);
+	cairo_set_source_rgba (cr, 0, 0, 0, studio ? 0.6 : 0.9);
 	cairo_move_to (cr, 0, a.get_height () - 0.5);
 	cairo_line_to (cr, a.get_width (), a.get_height () - 0.5);
 	cairo_stroke (cr);

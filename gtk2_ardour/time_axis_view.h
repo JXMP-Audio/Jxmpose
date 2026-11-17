@@ -234,6 +234,8 @@ public:
 	Children get_child_list () const;
 
 	static uint32_t preset_height (Height);
+	/** height needed to show two rows of header controls */
+	static uint32_t two_row_height ();
 
 	virtual void add_scale_related_menu_items (Gtk::Menu_Helpers::MenuList&) {}
 

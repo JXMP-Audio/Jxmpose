@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- JXMPOSE logo mark: five fader slots whose caps trace a wave. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2E3236"/>
+      <stop offset="1" stop-color="#1A1D20"/>
+    </linearGradient>
+    <linearGradient id="level" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#2F6FD6"/>
+      <stop offset="1" stop-color="#16E0D2"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="url(#body)"/>
+  <rect x="17.5" y="17.5" width="477" height="477" rx="102.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="3"/>
+  <!-- slots: x centres 136,196,256,316,376 ; track from y=104 to y=408 -->
+  <g>
+    <rect x="124" y="104" width="24" height="304" rx="12" fill="#0B0C0E"/>
+    <rect x="184" y="104" width="24" height="304" rx="12" fill="#0B0C0E"/>
+    <rect x="244" y="104" width="24" height="304" rx="12" fill="#0B0C0E"/>
+    <rect x="304" y="104" width="24" height="304" rx="12" fill="#0B0C0E"/>
+    <rect x="364" y="104" width="24" height="304" rx="12" fill="#0B0C0E"/>
+  </g>
+  <!-- level fills below the caps -->
+  <g fill="url(#level)">
+    <rect x="124" y="300" width="24" height="108" rx="12"/>
+    <rect x="184" y="196" width="24" height="212" rx="12"/>
+    <rect x="244" y="140" width="24" height="268" rx="12"/>
+    <rect x="304" y="220" width="24" height="188" rx="12"/>
+    <rect x="364" y="276" width="24" height="132" rx="12"/>
+  </g>
+  <!-- caps with index line -->
+  <g>
+    <rect x="106" y="282" width="60" height="36" rx="8" fill="#D9DBDF"/>
+    <rect x="166" y="178" width="60" height="36" rx="8" fill="#D9DBDF"/>
+    <rect x="226" y="122" width="60" height="36" rx="8" fill="#D9DBDF"/>
+    <rect x="286" y="202" width="60" height="36" rx="8" fill="#D9DBDF"/>
+    <rect x="346" y="258" width="60" height="36" rx="8" fill="#D9DBDF"/>
+  </g>
+  <g fill="#1A1D20">
+    <rect x="114" y="297" width="44" height="6" rx="3"/>
+    <rect x="174" y="193" width="44" height="6" rx="3"/>
+    <rect x="234" y="137" width="44" height="6" rx="3"/>
+    <rect x="294" y="217" width="44" height="6" rx="3"/>
+    <rect x="354" y="273" width="44" height="6" rx="3"/>
+  </g>
+</svg>
