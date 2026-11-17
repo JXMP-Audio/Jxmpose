@@ -1804,6 +1804,16 @@ private:
 
 	void setup_toolbar ();
 
+	/* info line (studio look), editor_info_line.cc */
+	Gtk::Widget* setup_info_line ();
+	void update_info_line ();
+	AudioClock* info_start_clock = nullptr;
+	AudioClock* info_end_clock = nullptr;
+	AudioClock* info_length_clock = nullptr;
+	Gtk::Label  info_line_name;
+	Gtk::Label  info_line_empty;
+	Gtk::HBox   info_line_fields;
+
 	void setup_tooltips ();
 
 	Gtk::HBox toolbar_hbox;

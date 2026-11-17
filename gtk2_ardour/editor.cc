@@ -65,6 +65,7 @@
 #include <ytkmm/menu.h>
 #include <ytkmm/menuitem.h>
 
+#include "gtkmm2ext/cairo_theme.h"
 #include "gtkmm2ext/bindings.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/keyboard.h"
@@ -1287,6 +1288,13 @@ Editor::set_session (Session *t)
 	_trigger_clip_picker.set_session (_session);
 	_application_bar.set_session (_session);
 	nudge_clock->set_session (_session);
+	if (info_start_clock) {
+		info_start_clock->set_session (_session);
+		info_end_clock->set_session (_session);
+		info_length_clock->set_session (_session);
+		Region::RegionsPropertyChanged.connect (_session_connections, invalidator (*this), std::bind (&Editor::update_info_line, this), gui_context ());
+		update_info_line ();
+	}
 	_summary->set_session (_session);
 	_vsummary->set_session (_session);
 	_group_tabs->set_session (_session);
@@ -2710,6 +2718,42 @@ Editor::snap_to_marker (timepos_t const & presnap, Temporal::RoundMode direction
 }
 
 
+/* studio look: paint a toolbar group as one dark rounded segment behind its buttons */
+static bool
+studio_segment_expose (GdkEventExpose* ev, Gtk::Widget* w)
+{
+	Glib::RefPtr<Gdk::Window> win = w->get_window ();
+	if (!win) {
+		return false;
+	}
+	Gtk::Allocation a = w->get_allocation ();
+	if (a.get_width () < 4 || a.get_height () < 4) {
+		return false;
+	}
+	cairo_t* cr = gdk_cairo_create (win->gobj ());
+	gdk_cairo_region (cr, ev->region);
+	cairo_clip (cr);
+	Gtkmm2ext::rounded_rectangle (cr, a.get_x () + .5, a.get_y () + .5, a.get_width () - 1, a.get_height () - 1, 4 * UIConfiguration::instance ().get_ui_scale ());
+	cairo_set_source_rgba (cr, 0, 0, 0, 0.32);
+	cairo_fill_preserve (cr);
+	cairo_set_line_width (cr, 1);
+	cairo_set_source_rgba (cr, 1, 1, 1, 0.045);
+	cairo_stroke (cr);
+	cairo_destroy (cr);
+	return false;
+}
+
+static void
+studio_segment (Gtk::Box& b)
+{
+	if (!CairoTheme::studio_widgets ()) {
+		return;
+	}
+	b.set_spacing (1);
+	b.set_border_width (2);
+	b.signal_expose_event ().connect (sigc::bind (sigc::ptr_fun (&studio_segment_expose), &b), false);
+}
+
 void
 Editor::setup_toolbar ()
 {
@@ -2889,6 +2933,9 @@ Editor::setup_toolbar ()
 	spacer->show();
 
 	ebox_vpacker.pack_start(toolbar_hbox, false, false);
+	if (Gtk::Widget* info_line = setup_info_line ()) {
+		ebox_vpacker.pack_start (*info_line, false, false);
+	}
 	ebox_vpacker.pack_start(*spacer, false, false);
 	ebox_vpacker.show();
 
@@ -2909,6 +2956,15 @@ Editor::setup_toolbar ()
 
 	_draw_box_spacer.set_no_show_all ();
 	_grid_box_spacer.set_no_show_all ();
+
+	studio_segment (*mouse_mode_hbox);
+	studio_segment (snap_box);
+	studio_segment (*nudge_box);
+	studio_segment (grid_box);
+	studio_segment (draw_box);
+	studio_segment (_zoom_box);
+	studio_segment (_track_box);
+	studio_segment (*follow_mode_hbox);
 
 	toolbar_hbox.show_all ();
 }

@@ -21,6 +21,7 @@
 #ifndef _WIDGETS_ARDOUR_SPACER_H_
 #define _WIDGETS_ARDOUR_SPACER_H_
 
+#include "gtkmm2ext/cairo_theme.h"
 #include "gtkmm2ext/cairo_widget.h"
 #include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/ui_config.h"
@@ -61,6 +62,11 @@ protected:
 	void render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*) {
 
 		if (_ratio <= 0) {
+			return;
+		}
+
+		if (Gtkmm2ext::CairoTheme::studio_widgets ()) {
+			/* studio look: groups are drawn as segments, no divider lines */
 			return;
 		}
 
