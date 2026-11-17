@@ -1629,7 +1629,8 @@ def build(bld):
     bld.path.find_dir ('libs/pbd/pbd')
 
     # set up target directories
-    lwrcase_dirname = 'ardour' + bld.env['MAJOR']
+    # JXMPOSE: install under our own name so it can live next to Ardour
+    lwrcase_dirname = (bld.env['PROGRAM_NAME'] or 'ardour').lower() + bld.env['MAJOR']
 
     # configuration files go here
     bld.env['CONFDIR'] = os.path.join(bld.env['SYSCONFDIR'], lwrcase_dirname)

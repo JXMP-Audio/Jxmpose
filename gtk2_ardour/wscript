@@ -793,7 +793,7 @@ def build(bld):
 
     obj              = bld(features = 'subst')
     obj.source       = 'ardour.sh.in'
-    obj.target       = 'ardour' + bld.env['MAJOR']
+    obj.target       = bld.env['lwrcase_dirname']
     obj.chmod        = Utils.O755
     obj.dict         = wrapper_subst_dict
     obj.install_path = bld.env['BINDIR']
@@ -948,6 +948,7 @@ def build(bld):
                     'ARDOUR_ICON' : bld.env['lwrcase_dirname'],
                     'VERSION': bld.env['VERSION'],
                     'DATE': bld.env['DATE'],
+                    'PROGRAM_NAME': bld.env['PROGRAM_NAME'],
     }
 
     if bld.env['FREEDESKTOP']:
@@ -961,7 +962,7 @@ def build(bld):
 
         obj              = bld(features = 'subst')
         obj.source       = 'ardour-mime-info.xml'
-        obj.target       = 'ardour.xml'
+        obj.target       = bld.env['lwrcase_dirname'] + '-mime.xml'
         obj.chmod        = Utils.O644
         bld.install_files (os.path.join (bld.env['PREFIX'], 'share/mime/packages'), obj.target)
 
@@ -978,12 +979,15 @@ def build(bld):
 
         # install desktop icon files
         icon_file_name = bld.env['lwrcase_dirname'] + '.png'
-        bld.install_as('${PREFIX}/share/icons/hicolor/16x16/apps/' + icon_file_name, 'resources/Ardour-icon_16px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/22x22/apps/'+ icon_file_name, 'resources/Ardour-icon_22px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/32x32/apps/'+ icon_file_name, 'resources/Ardour-icon_32px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/48x48/apps/'+ icon_file_name, 'resources/Ardour-icon_48px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/256x256/apps/'+ icon_file_name, 'resources/Ardour-icon_256px.png')
-        bld.install_as('${PREFIX}/share/icons/hicolor/512x512/apps/'+ icon_file_name, 'resources/Ardour-icon_512px.png')
+        icon_src = 'resources/' + bld.env['PROGRAM_NAME'] + '-icon_%spx.png'
+        if not os.path.exists (os.path.join (bld.path.abspath (), icon_src % '16')):
+            icon_src = 'resources/Ardour-icon_%spx.png'
+        bld.install_as('${PREFIX}/share/icons/hicolor/16x16/apps/' + icon_file_name, icon_src % '16')
+        bld.install_as('${PREFIX}/share/icons/hicolor/22x22/apps/'+ icon_file_name, icon_src % '22')
+        bld.install_as('${PREFIX}/share/icons/hicolor/32x32/apps/'+ icon_file_name, icon_src % '32')
+        bld.install_as('${PREFIX}/share/icons/hicolor/48x48/apps/'+ icon_file_name, icon_src % '48')
+        bld.install_as('${PREFIX}/share/icons/hicolor/256x256/apps/'+ icon_file_name, icon_src % '256')
+        bld.install_as('${PREFIX}/share/icons/hicolor/512x512/apps/'+ icon_file_name, icon_src % '512')
 
     # Keybindings
 
