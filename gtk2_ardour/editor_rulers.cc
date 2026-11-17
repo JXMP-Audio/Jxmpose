@@ -48,6 +48,7 @@
 
 #include "temporal/tempo.h"
 
+#include "gtkmm2ext/cairo_theme.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/keyboard.h"
 
@@ -469,6 +470,16 @@ Editor::restore_ruler_visibility ()
 		ruler_range_action->set_active (true);
 		ruler_marker_action->set_active (true);
 		ruler_section_action->set_active (td == Temporal::BeatTime);
+
+		if (Gtkmm2ext::CairoTheme::studio_widgets ()) {
+			/* studio look: one musical ruler plus tempo, ranges and markers */
+			ruler_minsec_action->set_active (false);
+			ruler_timecode_action->set_active (false);
+			ruler_bbt_action->set_active (true);
+			ruler_tempo_action->set_active (true);
+			ruler_meter_action->set_active (false);
+			ruler_section_action->set_active (false);
+		}
 	}
 
 	no_ruler_shown_update = false;
