@@ -396,10 +396,8 @@ RouteUI::set_route (std::shared_ptr<Route> rp)
 		} else if (!_route->is_track() && UIConfiguration::instance().get_use_palette_for_new_bus ()) {
 			set_color (gdk_color_to_rgba (AxisView::round_robin_palette_color ()));
 		} else {
-			string cp = UIConfiguration::instance().get_stripable_color_palette ();
-			Gdk::ArrayHandle_Color gc = ColorSelection::palette_from_string (cp);
-			std::vector<Gdk::Color> c (gc);
-			set_color (gdk_color_to_rgba (c[0]));
+			/* no colour assigned yet: neutral grey until the user picks one */
+			set_color (UIConfiguration::instance().color ("neutral:foreground2"));
 		}
 	}
 

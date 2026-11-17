@@ -137,6 +137,15 @@ RouteTimeAxisView::RouteTimeAxisView (PublicEditor& ed, Session* sess, ArdourCan
 	number_label.set_elements((ArdourButton::Element)(ArdourButton::Edge|ArdourButton::Body|ArdourButton::Text|ArdourButton::Inactive));
 	number_label.set_alignment(.5, .5);
 	number_label.set_fallthrough_to_parent (true);
+	/* double-click the colour strip to pick the track colour */
+	number_label.signal_button_press_event ().connect ([this] (GdkEventButton* ev) {
+			if (ev->type == GDK_2BUTTON_PRESS && ev->button == 1) {
+				choose_color (dynamic_cast<Gtk::Window*> (number_label.get_toplevel ()));
+				return true;
+			}
+			return false;
+		}, false);
+	set_tooltip (number_label, _("Double-click to choose the track color"));
 
 	sess->config.ParameterChanged.connect (*this, invalidator (*this), std::bind (&RouteTimeAxisView::parameter_changed, this, _1), gui_context());
 	UIConfiguration::instance().ParameterChanged.connect (sigc::mem_fun (*this, &RouteTimeAxisView::parameter_changed));

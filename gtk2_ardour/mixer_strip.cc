@@ -775,7 +775,9 @@ MixerStrip::set_route (std::shared_ptr<Route> rt)
 	if (!_inspector_layout || _embedded) {
 		width_button.show();
 	}
-	width_hide_box.show();
+	if (!_inspector_layout || !_embedded) {
+		width_hide_box.show();
+	}
 	global_frame.show();
 	global_vpacker.show();
 	mute_solo_table.show();
@@ -1492,7 +1494,11 @@ MixerStrip::build_inspector_layout ()
 
 	const std::string pfx = _embedded ? X_("inspector-") : X_("mixer-");
 
-	if (!_embedded) {
+	if (_embedded) {
+		/* Inspector: fixed width and always shown, the colour is the name button */
+		width_hide_box.set_no_show_all ();
+		width_hide_box.hide ();
+	} else {
 		/* console look: the top row is just a thin strip in the track colour,
 		 * width and hide live in the name-button context menu */
 		width_button.set_no_show_all ();
@@ -1990,6 +1996,10 @@ MixerStrip::parameter_changed (string p)
 		   our VisibilityGroup to reflect these changes in our widgets.
 		*/
 		_visibility.set_state (UIConfiguration::instance().get_mixer_strip_visibility ());
+		if (_inspector_layout && _embedded) {
+			/* the Inspector's Notes section is the comment button */
+			_comment_button.show ();
+		}
 	} else if (p == "track-name-number") {
 		name_changed ();
 		update_track_number_visibility();

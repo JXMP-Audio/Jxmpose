@@ -3209,7 +3209,7 @@ RCOptionEditor::RCOptionEditor ()
 		     );
 	Gtkmm2ext::UI::instance()->set_tip (bo->tip_widget (),
 				_("<b>When enabled</b> new Tracks are assigned a color from the stripable-color-palette in round-robin fashion.\n"
-				  "<b>When disabled</b> all new Tracks will use the FIRST color from the stripable-color-palette."
+				  "<b>When disabled</b> new Tracks start out neutral grey; pick a color later from the track's context menu."
 					));
 	add_option (_("Appearance/Colors"), bo);
 
@@ -3221,7 +3221,7 @@ RCOptionEditor::RCOptionEditor ()
 		     );
 	Gtkmm2ext::UI::instance()->set_tip (bo->tip_widget (),
 				_("<b>When enabled</b> new Buses are assigned a color from the stripable-color-palette in round-robin fashion.\n"
-				  "<b>When disabled</b> all new Buses will use the FIRST color from the stripable-color-palette."
+				  "<b>When disabled</b> new Busses start out neutral grey; pick a color later from the bus's context menu."
 					));
 	add_option (_("Appearance/Colors"), bo);
 
