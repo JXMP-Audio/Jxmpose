@@ -173,6 +173,8 @@ private:
 	void init ();
 
 	bool  _embedded;
+	bool  _inspector_layout;
+	void  build_inspector_layout ();
 	bool  _packed;
 	bool  _mixer_owned;
 	Width _width;

@@ -66,6 +66,7 @@
 #include "ardour/vca.h"
 #include "ardour/vca_manager.h"
 
+#include "gtkmm2ext/cairo_theme.h"
 #include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/menu_elems.h"
@@ -383,6 +384,7 @@ MixerStrip::init ()
 
 	_packed = false;
 	_embedded = false;
+	_inspector_layout = false;
 
 	number_label.signal_button_press_event().connect (sigc::mem_fun(*this, &MixerStrip::number_button_button_press), false);
 
@@ -864,7 +866,7 @@ MixerStrip::set_width_enum (Width w, void* owner)
 
 		{
 			// panners expect an even number of horiz. pixels
-			int width = rintf (max (110.f * scale, gpm.get_gm_width() + 10.f * scale)) + 1;
+			int width = rintf (max ((_inspector_layout ? 180.f : 110.f) * scale, gpm.get_gm_width() + 10.f * scale)) + 1;
 			width &= ~1;
 			set_size_request (width, -1);
 		}
@@ -1441,6 +1443,121 @@ void
 MixerStrip::set_embedded (bool yn)
 {
 	_embedded = yn;
+	if (yn && !_inspector_layout && Gtkmm2ext::CairoTheme::studio_widgets ()) {
+		build_inspector_layout ();
+	}
+}
+
+namespace {
+
+/* studio look: a collapsible section of the editor's Inspector */
+class InspectorSection : public Gtk::VBox
+{
+public:
+	InspectorSection (std::string const& title, bool expand)
+		: _title (title)
+		, _expand (expand)
+		, _open (true)
+	{
+		_header.set_name ("generic button");
+		_header.set_alignment (0.0, 0.5);
+		_header.set_corner_radius (3);
+		_header.signal_clicked.connect (sigc::mem_fun (*this, &InspectorSection::toggle));
+		_content.set_spacing (2);
+		set_spacing (2);
+		pack_start (_header, false, false);
+		pack_start (_content, true, true);
+		_header.show ();
+		_content.show ();
+		update_title ();
+	}
+
+	void add_item (Gtk::Widget& w, bool expand = false)
+	{
+		_content.pack_start (w, expand, expand);
+	}
+
+	void toggle ()
+	{
+		_open = !_open;
+		if (_open) {
+			_content.show ();
+		} else {
+			_content.hide ();
+		}
+		update_title ();
+		Gtk::Box* p = dynamic_cast<Gtk::Box*> (get_parent ());
+		if (p && _expand) {
+			p->set_child_packing (*this, _open, _open, 0u);
+		}
+	}
+
+private:
+	void update_title ()
+	{
+		_header.set_text ((_open ? "\u25BE  " : "\u25B8  ") + _title);
+	}
+
+	ArdourButton   _header;
+	Gtk::VBox      _content;
+	std::string    _title;
+	bool           _expand;
+	bool           _open;
+};
+
+}
+
+/* Re-arrange the embedded (editor) strip into Inspector sections:
+ * Routing, Inserts & Sends, Channel, Notes.
+ */
+void
+MixerStrip::build_inspector_layout ()
+{
+	_inspector_layout = true;
+
+	Gtk::Widget* moved[] = {
+		&input_button_box, &invert_button_box, &_tmaster_widget, &processor_box, &panners,
+		&rec_mon_table, &master_volume_table, &solo_iso_table, &mute_solo_table, &gpm,
+		&control_slave_ui, &bottom_button_table, &output_button, &_comment_button
+	};
+	for (auto w : moved) {
+		if (w->get_parent () == &global_vpacker) {
+			global_vpacker.remove (*w);
+		}
+	}
+
+	InspectorSection* routing = manage (new InspectorSection (_("Routing"), false));
+	routing->add_item (input_button_box);
+	routing->add_item (output_button);
+
+	InspectorSection* inserts = manage (new InspectorSection (_("Inserts & Sends"), true));
+	inserts->add_item (_tmaster_widget);
+	inserts->add_item (processor_box, true);
+
+	InspectorSection* channel = manage (new InspectorSection (_("Channel"), false));
+	channel->add_item (invert_button_box);
+	channel->add_item (panners);
+	channel->add_item (rec_mon_table);
+	channel->add_item (master_volume_table);
+	channel->add_item (solo_iso_table);
+	channel->add_item (mute_solo_table);
+	channel->add_item (gpm);
+	channel->add_item (control_slave_ui);
+	channel->add_item (bottom_button_table);
+
+	InspectorSection* notes = manage (new InspectorSection (_("Notes"), false));
+	notes->add_item (_comment_button);
+
+	global_vpacker.set_spacing (4);
+	global_vpacker.pack_start (*routing, Gtk::PACK_SHRINK);
+	global_vpacker.pack_start (*inserts, true, true);
+	global_vpacker.pack_start (*channel, Gtk::PACK_SHRINK);
+	global_vpacker.pack_start (*notes, Gtk::PACK_SHRINK);
+
+	routing->show ();
+	inserts->show ();
+	channel->show ();
+	notes->show ();
 }
 
 void
