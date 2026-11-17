@@ -518,6 +518,10 @@ MixerStrip::update_trim_control ()
 void
 MixerStrip::set_route (std::shared_ptr<Route> rt)
 {
+	if (!_inspector_layout && Gtkmm2ext::CairoTheme::studio_widgets ()) {
+		build_inspector_layout ();
+	}
+
 	//the rec/monitor stuff only shows up for tracks.
 	//the show_sends only shows up for buses.
 	//remove them all here, and we may add them back later
@@ -866,7 +870,7 @@ MixerStrip::set_width_enum (Width w, void* owner)
 
 		{
 			// panners expect an even number of horiz. pixels
-			int width = rintf (max ((_inspector_layout ? 180.f : 110.f) * scale, gpm.get_gm_width() + 10.f * scale)) + 1;
+			int width = rintf (max ((_inspector_layout && _embedded ? 180.f : 110.f) * scale, gpm.get_gm_width() + 10.f * scale)) + 1;
 			width &= ~1;
 			set_size_request (width, -1);
 		}
@@ -1443,21 +1447,21 @@ void
 MixerStrip::set_embedded (bool yn)
 {
 	_embedded = yn;
-	if (yn && !_inspector_layout && Gtkmm2ext::CairoTheme::studio_widgets ()) {
-		build_inspector_layout ();
-	}
 }
 
 namespace {
 
-/* studio look: a collapsible section of the editor's Inspector */
+/* studio look: a collapsible section (Inspector) or rack (mixer strip).
+ * Sections sharing a key open/close together, e.g. the Inserts rack of
+ * every mixer strip.
+ */
 class InspectorSection : public Gtk::VBox
 {
 public:
-	InspectorSection (std::string const& title, bool expand)
+	InspectorSection (std::string const& title, std::string const& key, bool expand)
 		: _title (title)
+		, _key (key)
 		, _expand (expand)
-		, _open (true)
 	{
 		_header.set_name ("generic button");
 		_header.set_alignment (0.0, 0.5);
@@ -1469,7 +1473,8 @@ public:
 		pack_start (_content, true, true);
 		_header.show ();
 		_content.show ();
-		update_title ();
+		changed ().connect (sigc::mem_fun (*this, &InspectorSection::apply));
+		apply (_key);
 	}
 
 	void add_item (Gtk::Widget& w, bool expand = false)
@@ -1479,36 +1484,58 @@ public:
 
 	void toggle ()
 	{
-		_open = !_open;
-		if (_open) {
+		state ()[_key] = !is_open ();
+		changed ().emit (_key);
+	}
+
+	void apply (std::string const& key)
+	{
+		if (key != _key) {
+			return;
+		}
+		const bool open = is_open ();
+		if (open) {
 			_content.show ();
 		} else {
 			_content.hide ();
 		}
-		update_title ();
+		_header.set_text ((open ? "\u25BE  " : "\u25B8  ") + _title);
 		Gtk::Box* p = dynamic_cast<Gtk::Box*> (get_parent ());
 		if (p && _expand) {
-			p->set_child_packing (*this, _open, _open, 0u);
+			p->set_child_packing (*this, open, open, 0u);
 		}
 	}
 
 private:
-	void update_title ()
+	static std::map<std::string, bool>& state ()
 	{
-		_header.set_text ((_open ? "\u25BE  " : "\u25B8  ") + _title);
+		static std::map<std::string, bool> s;
+		return s;
+	}
+	static sigc::signal<void, std::string>& changed ()
+	{
+		static sigc::signal<void, std::string> c;
+		return c;
+	}
+	bool is_open () const
+	{
+		std::map<std::string, bool>::const_iterator i = state ().find (_key);
+		return i == state ().end () ? true : i->second;
 	}
 
 	ArdourButton   _header;
 	Gtk::VBox      _content;
 	std::string    _title;
+	std::string    _key;
 	bool           _expand;
-	bool           _open;
 };
 
 }
 
-/* Re-arrange the embedded (editor) strip into Inspector sections:
- * Routing, Inserts & Sends, Channel, Notes.
+/* studio look: lay the strip out in sections.
+ * Editor Inspector (embedded): name on top, Routing, Inserts & Sends,
+ * Channel, Notes. Mixer strip: Routing, Inserts and Fader racks that
+ * open/close for all strips at once, name at the bottom.
  */
 void
 MixerStrip::build_inspector_layout ()
@@ -1526,38 +1553,60 @@ MixerStrip::build_inspector_layout ()
 		}
 	}
 
-	InspectorSection* routing = manage (new InspectorSection (_("Routing"), false));
+	const std::string pfx = _embedded ? X_("inspector-") : X_("mixer-");
+
+	setup_auto_rw_buttons ();
+	Gtk::HBox* rw_box = manage (new Gtk::HBox (true, 2));
+	rw_box->pack_start (auto_read_button, true, true);
+	rw_box->pack_start (auto_write_button, true, true);
+	rw_box->show_all ();
+
+	InspectorSection* routing = manage (new InspectorSection (_("Routing"), pfx + X_("routing"), false));
 	routing->add_item (input_button_box);
 	routing->add_item (output_button);
 
-	InspectorSection* inserts = manage (new InspectorSection (_("Inserts & Sends"), true));
+	InspectorSection* inserts = manage (new InspectorSection (_embedded ? _("Inserts & Sends") : _("Inserts"), pfx + X_("inserts"), true));
 	inserts->add_item (_tmaster_widget);
 	inserts->add_item (processor_box, true);
 
-	InspectorSection* channel = manage (new InspectorSection (_("Channel"), false));
+	InspectorSection* channel = manage (new InspectorSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), false));
 	channel->add_item (invert_button_box);
 	channel->add_item (panners);
 	channel->add_item (rec_mon_table);
 	channel->add_item (master_volume_table);
 	channel->add_item (solo_iso_table);
 	channel->add_item (mute_solo_table);
+	channel->add_item (*rw_box);
 	channel->add_item (gpm);
 	channel->add_item (control_slave_ui);
 	channel->add_item (bottom_button_table);
 
-	InspectorSection* notes = manage (new InspectorSection (_("Notes"), false));
-	notes->add_item (_comment_button);
-
 	global_vpacker.set_spacing (4);
 	global_vpacker.pack_start (*routing, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (*inserts, true, true);
-	global_vpacker.pack_start (*channel, Gtk::PACK_SHRINK);
-	global_vpacker.pack_start (*notes, Gtk::PACK_SHRINK);
+
+	/* fader zone stays at the bottom when racks above are collapsed */
+	if (_embedded) {
+		InspectorSection* notes = manage (new InspectorSection (_("Notes"), pfx + X_("notes"), false));
+		notes->add_item (_comment_button);
+		global_vpacker.pack_end (*notes, Gtk::PACK_SHRINK);
+		notes->show ();
+	} else {
+		/* channel name at the bottom, like a console scribble strip */
+		global_vpacker.remove (name_button);
+		global_vpacker.pack_end (name_button, Gtk::PACK_SHRINK);
+		global_vpacker.pack_end (_comment_button, Gtk::PACK_SHRINK);
+	}
+	global_vpacker.pack_end (*channel, Gtk::PACK_SHRINK);
 
 	routing->show ();
 	inserts->show ();
 	channel->show ();
-	notes->show ();
+
+	/* re-apply open/closed state now that the sections are packed */
+	routing->apply (pfx + X_("routing"));
+	inserts->apply (pfx + X_("inserts"));
+	channel->apply (pfx + X_("channel"));
 }
 
 void

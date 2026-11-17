@@ -35,6 +35,8 @@
 
 #include "gtkmm2ext/widget_state.h"
 
+#include "widgets/ardour_button.h"
+
 #include "ardour/ardour.h"
 #include "ardour/mute_master.h"
 #include "ardour/route.h"
@@ -233,6 +235,15 @@ protected:
 	PBD::ScopedConnectionList route_connections;
 	PBD::ScopedConnectionList send_connections;
 	bool                      self_destruct;
+
+	/* studio look: R/W automation buttons (track header, mixer strip) */
+	ArdourWidgets::ArdourButton auto_read_button;
+	ArdourWidgets::ArdourButton auto_write_button;
+	void setup_auto_rw_buttons ();
+	bool auto_read_press (GdkEventButton*);
+	bool auto_write_press (GdkEventButton*);
+	void set_route_automation_state (ARDOUR::AutoState);
+	void update_auto_rw_buttons ();
 
 	void init ();
 	void reset ();

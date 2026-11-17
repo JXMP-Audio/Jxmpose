@@ -123,8 +123,6 @@ RouteTimeAxisView::RouteTimeAxisView (PublicEditor& ed, Session* sess, ArdourCan
 	, route_group_button (S_("RTAV|G"))
 	, playlist_button (S_("RTAV|P"))
 	, automation_button (S_("RTAV|A"))
-	, auto_read_button (S_("Automation|R"))
-	, auto_write_button (S_("Automation|W"))
 	, automation_action_menu (0)
 	, plugins_submenu_item (0)
 	, route_group_menu (0)
@@ -210,26 +208,15 @@ RouteTimeAxisView::set_route (std::shared_ptr<Route> rt)
 		}
 		controls_table.attach (name_label, 4, 5, 0, 1, Gtk::FILL|Gtk::EXPAND, Gtk::SHRINK, 2, 0);
 
-		auto_read_button.set_name ("transport button");    /* lit green */
-		auto_write_button.set_name ("record enable button"); /* lit red */
+		setup_auto_rw_buttons ();
 		auto_read_button.set_tweaks (ArdourButton::TrackHeader);
 		auto_write_button.set_tweaks (ArdourButton::TrackHeader);
-		set_tooltip (auto_read_button, _("Read automation (volume, trim, mute, pan)"));
-		set_tooltip (auto_write_button, _("Write automation (touch)"));
-		auto_read_button.signal_button_press_event ().connect (sigc::mem_fun (*this, &RouteTimeAxisView::auto_read_press), false);
-		auto_write_button.signal_button_press_event ().connect (sigc::mem_fun (*this, &RouteTimeAxisView::auto_write_press), false);
 		controls_button_size_group->add_widget (auto_read_button);
 		controls_button_size_group->add_widget (auto_write_button);
 		controls_table.attach (auto_read_button, 2, 3, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 		controls_table.attach (auto_write_button, 3, 4, 0, 1, Gtk::SHRINK, Gtk::SHRINK, 0, 0);
 		auto_read_button.show ();
 		auto_write_button.show ();
-
-		std::shared_ptr<AutomationControl> gc = _route->gain_control ();
-		if (gc && gc->alist ()) {
-			gc->alist ()->automation_state_changed.connect (auto_state_connections, invalidator (*this), std::bind (&RouteTimeAxisView::update_auto_rw_buttons, this), gui_context ());
-		}
-		update_auto_rw_buttons ();
 	}
 
 	if (is_track()) {
@@ -1173,57 +1160,6 @@ RouteTimeAxisView::set_height (uint32_t h, TrackHeightMode m, bool from_idle)
 		/* only emit the signal if the height really changed */
 		request_redraw ();
 	}
-}
-
-void
-RouteTimeAxisView::set_route_automation_state (AutoState as)
-{
-	std::shared_ptr<AutomationControl> ctrls[] = {
-		_route->gain_control (),
-		_route->trim_control (),
-		_route->mute_control (),
-		_route->pan_azimuth_control (),
-		_route->pan_width_control (),
-	};
-	for (auto const& c : ctrls) {
-		if (c && c->alist ()) {
-			c->set_automation_state (as);
-		}
-	}
-}
-
-void
-RouteTimeAxisView::update_auto_rw_buttons ()
-{
-	std::shared_ptr<AutomationControl> gc = _route ? _route->gain_control () : std::shared_ptr<AutomationControl> ();
-	const AutoState as = gc ? gc->automation_state () : ARDOUR::Off;
-	const bool writing = (as == ARDOUR::Write || as == ARDOUR::Touch || as == ARDOUR::Latch);
-	auto_read_button.set_active_state ((as == ARDOUR::Play || writing) ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
-	auto_write_button.set_active_state (writing ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
-}
-
-bool
-RouteTimeAxisView::auto_read_press (GdkEventButton* ev)
-{
-	if (ev->button != 1) {
-		return false;
-	}
-	const bool reading = auto_read_button.active_state () == Gtkmm2ext::ExplicitActive;
-	/* R off also stops writing, R on reads */
-	set_route_automation_state (reading ? ARDOUR::Off : ARDOUR::Play);
-	return true;
-}
-
-bool
-RouteTimeAxisView::auto_write_press (GdkEventButton* ev)
-{
-	if (ev->button != 1) {
-		return false;
-	}
-	const bool writing = auto_write_button.active_state () == Gtkmm2ext::ExplicitActive;
-	/* W on writes in touch mode (and reads), W off keeps reading */
-	set_route_automation_state (writing ? ARDOUR::Play : ARDOUR::Touch);
-	return true;
 }
 
 void

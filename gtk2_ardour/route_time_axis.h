@@ -252,13 +252,6 @@ protected:
 	ArdourWidgets::ArdourButton playlist_button;
 	ArdourWidgets::ArdourButton automation_button;
 	/* studio look: automation read / write for the track's own controls */
-	ArdourWidgets::ArdourButton auto_read_button;
-	ArdourWidgets::ArdourButton auto_write_button;
-	PBD::ScopedConnectionList   auto_state_connections;
-	bool auto_read_press (GdkEventButton*);
-	bool auto_write_press (GdkEventButton*);
-	void set_route_automation_state (ARDOUR::AutoState);
-	void update_auto_rw_buttons ();
 	ArdourWidgets::ArdourButton number_label;
 
 	Gtk::Menu           subplugin_menu;
