@@ -51,6 +51,7 @@
 #include "gtkmm2ext/dndtreeview.h"
 #include "gtkmm2ext/treeutils.h"
 
+#include "widgets/ardour_button.h"
 #include "widgets/ardour_dropdown.h"
 #include "widgets/frame.h"
 #include "widgets/metabutton.h"
@@ -233,6 +234,10 @@ private:
 	Gtk::Notebook             _sidebar_notebook;
 	ArdourWidgets::MetaButton _sidebar_pager1;
 	ArdourWidgets::MetaButton _sidebar_pager2;
+	/* studio look: flat tab row + plugin list mode selector */
+	std::vector<std::pair<ArdourWidgets::ArdourButton*, Gtk::Widget*> > _studio_tabs;
+	ArdourWidgets::ArdourDropdown _studio_plugin_mode;
+	void setup_studio_sidebar ();
 
 	Gtk::EventBox         _mixer_scene_spacer;
 	ArdourWidgets::Frame  _mixer_scene_frame;

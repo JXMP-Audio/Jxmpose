@@ -1807,6 +1807,9 @@ private:
 	/* info line (studio look), editor_info_line.cc */
 	Gtk::Widget* setup_info_line ();
 	void update_info_line ();
+	void info_start_changed ();
+	void info_end_changed ();
+	void info_length_changed ();
 	AudioClock* info_start_clock = nullptr;
 	AudioClock* info_end_clock = nullptr;
 	AudioClock* info_length_clock = nullptr;

@@ -75,6 +75,8 @@
 #include "foldback_strip.h"
 #include "keyboard.h"
 #include "mixer_ui.h"
+#include "studio_section.h"
+#include "gtkmm2ext/cairo_theme.h"
 #include "mixer_strip.h"
 #include "monitor_section.h"
 #include "opts.h"
@@ -384,6 +386,11 @@ Mixer_UI::Mixer_UI ()
 	add_sidebar_page (_("Strip FX"), _("Channel Strip / Track Templates"), strip_templates_vbox);
 
 	_sidebar_pager2.set_index (4);
+
+	if (Gtkmm2ext::CairoTheme::studio_widgets ()) {
+		list_vpacker.remove (*tabbox);
+		setup_studio_sidebar ();
+	}
 
 	vca_label_bar.set_size_request (-1, 16 + 1); /* must match height in GroupTabs::set_size_request()  + 1 border px*/
 	vca_vpacker.pack_start (vca_label_bar, false, false);
@@ -3238,6 +3245,68 @@ Mixer_UI::update_sidebar_pagers (guint page)
 	}
 	_sidebar_pager1.set_active (label);
 	_sidebar_pager2.set_active (label);
+
+	Gtk::Widget* cur = _sidebar_notebook.get_nth_page (page);
+	for (auto const& t : _studio_tabs) {
+		t.first->set_active (t.second == cur);
+	}
+	if (page == 0 && !_studio_tabs.empty ()) {
+		_studio_plugin_mode.set_active (label);
+	}
+}
+
+/* studio look: one row of flat tabs instead of the two pager dropdowns,
+ * the plugin list mode moves into the plugin page, and the mixer scenes
+ * become a collapsible section.
+ */
+void
+Mixer_UI::setup_studio_sidebar ()
+{
+	struct { const char* label; const char* tip; Gtk::Widget* w; } tabs[] = {
+		{ _("Visibility"), _("Track & Bus Visibility"),           &track_display_scroller },
+		{ _("Groups"),     _("Track & Bus Groups"),               &group_display_vbox },
+		{ _("Plugins"),    _("Plugins"),                          &favorite_plugins_vbox },
+		{ _("Templates"),  _("Channel Strip / Track Templates"),  &strip_templates_vbox },
+	};
+
+	HBox* tabrow = manage (new HBox (true, 1));
+	for (auto const& t : tabs) {
+		ArdourButton* b = manage (new ArdourButton (t.label));
+		b->set_name ("tab button");
+		b->set_corner_radius (2);
+		set_tooltip (*b, t.tip);
+		Gtk::Widget* w = t.w;
+		b->signal_clicked.connect ([this, w] () {
+				_sidebar_notebook.set_current_page (_sidebar_notebook.page_num (*w));
+				});
+		tabrow->pack_start (*b, true, true);
+		_studio_tabs.push_back (std::make_pair (b, w));
+	}
+	tabrow->show_all ();
+	list_vpacker.pack_start (*tabrow, false, false, 2);
+	list_vpacker.reorder_child (*tabrow, 0);
+
+	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Favorite Plugins"), [this] () { set_plugin_list_mode (PLM_Favorite); update_sidebar_pagers (0); }));
+	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Recent Plugins"),   [this] () { set_plugin_list_mode (PLM_Recent); update_sidebar_pagers (0); }));
+	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Top-10 Plugins"),   [this] () { set_plugin_list_mode (PLM_TopHits); update_sidebar_pagers (0); }));
+	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Search All Plugins"), [this] () { set_plugin_list_mode (PLM_SearchAll); update_sidebar_pagers (0); }));
+	_studio_plugin_mode.set_sizing_texts ({ _("Search All Plugins") });
+	favorite_plugins_vbox.pack_start (_studio_plugin_mode, false, false);
+	favorite_plugins_vbox.reorder_child (_studio_plugin_mode, 0);
+	_studio_plugin_mode.show ();
+
+	list_vpacker.remove (_mixer_scene_spacer);
+	list_vpacker.remove (_mixer_scene_frame);
+	_mixer_scene_frame.remove ();
+	StudioSection* scenes = manage (new StudioSection (_("Mixer Scenes  (F1..F8)"), X_("mixer-scenes"), false));
+	scenes->add_item (_mixer_scene_vbox);
+	scenes->set_border_width (2);
+	list_vpacker.pack_start (*scenes, false, false);
+	scenes->show ();
+	scenes->refresh ();
+	_mixer_scene_vbox.show_all ();
+
+	update_sidebar_pagers (_sidebar_notebook.get_current_page ());
 }
 
 void

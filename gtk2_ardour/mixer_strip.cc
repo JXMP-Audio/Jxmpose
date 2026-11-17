@@ -82,6 +82,7 @@
 #include "context_menu_helper.h"
 #include "enums_convert.h"
 #include "mixer_strip.h"
+#include "studio_section.h"
 #include "mixer_strip_decor.h"
 #include "mixer_ui.h"
 #include "keyboard.h"
@@ -761,7 +762,9 @@ MixerStrip::set_route (std::shared_ptr<Route> rt)
 
 	if (!route()->is_master() && !route()->is_monitor()) {
 		/* we don't allow master or control routes to be hidden */
-		hide_button.show();
+		if (!_inspector_layout || _embedded) {
+			hide_button.show();
+		}
 		number_label.show();
 	}
 
@@ -769,7 +772,9 @@ MixerStrip::set_route (std::shared_ptr<Route> rt)
 	gpm.gain_display.show ();
 	gpm.peak_display.show ();
 
-	width_button.show();
+	if (!_inspector_layout || _embedded) {
+		width_button.show();
+	}
 	width_hide_box.show();
 	global_frame.show();
 	global_vpacker.show();
@@ -1110,6 +1115,16 @@ MixerStrip::build_route_ops_menu ()
 		Gtk::Window* top = dynamic_cast<Gtk::Window*> (get_toplevel());
 
 		items.push_back (MenuElem (_("Color..."), sigc::bind (sigc::mem_fun (*this, &RouteUI::choose_color), top)));
+
+		if (_inspector_layout && !_embedded) {
+			/* studio: width/hide buttons are not shown, offer them here */
+			items.push_back (MenuElem (_width == Wide ? _("Narrow Strip") : _("Wide Strip"), [this] () {
+						set_width_enum (_width == Wide ? Narrow : Wide, this);
+					}));
+			if (!_route->is_master () && !_route->is_monitor ()) {
+				items.push_back (MenuElem (_("Hide Strip"), sigc::mem_fun (*this, &MixerStrip::hide_clicked)));
+			}
+		}
 
 		items.push_back (MenuElem (_("Comments..."), sigc::mem_fun (*this, &RouteUI::open_comment_editor)));
 
@@ -1454,112 +1469,6 @@ MixerStrip::set_embedded (bool yn)
 	_embedded = yn;
 }
 
-namespace {
-
-/* studio look: a collapsible section (Inspector) or rack (mixer strip).
- * Sections sharing a key open/close together, e.g. the Inserts rack of
- * every mixer strip.
- */
-class InspectorSection : public Gtk::VBox
-{
-public:
-	InspectorSection (std::string const& title, std::string const& key, bool expand)
-		: _title (title)
-		, _key (key)
-		, _expand (expand)
-	{
-		_header.set_name ("generic button");
-		_header.set_alignment (0.0, 0.5);
-		_header.set_corner_radius (3);
-		_header.signal_clicked.connect (sigc::mem_fun (*this, &InspectorSection::toggle));
-		_content.set_spacing (2);
-		set_spacing (2);
-		pack_start (_header, false, false);
-		pack_start (_content, true, true);
-		_header.show ();
-		_content.show ();
-		changed ().connect (sigc::mem_fun (*this, &InspectorSection::apply));
-		apply (_key);
-	}
-
-	void add_item (Gtk::Widget& w, bool expand = false)
-	{
-		_content.pack_start (w, expand, expand);
-	}
-
-	void toggle ()
-	{
-		state ()[_key] = !is_open ();
-		save_state ();
-		changed ().emit (_key);
-	}
-
-	void apply (std::string const& key)
-	{
-		if (key != _key) {
-			return;
-		}
-		const bool open = is_open ();
-		if (open) {
-			_content.show ();
-		} else {
-			_content.hide ();
-		}
-		_header.set_text ((open ? "\u25BE  " : "\u25B8  ") + _title);
-		Gtk::Box* p = dynamic_cast<Gtk::Box*> (get_parent ());
-		if (p && _expand) {
-			p->set_child_packing (*this, open, open, 0u);
-		}
-	}
-
-private:
-	/* open/closed state, kept in the UI config as a comma separated list of closed keys */
-	static std::map<std::string, bool>& state ()
-	{
-		static std::map<std::string, bool> s;
-		static bool loaded = false;
-		if (!loaded) {
-			loaded = true;
-			std::stringstream ss (UIConfiguration::instance ().get_studio_closed_sections ());
-			std::string k;
-			while (std::getline (ss, k, ',')) {
-				if (!k.empty ()) {
-					s[k] = false;
-				}
-			}
-		}
-		return s;
-	}
-	static void save_state ()
-	{
-		std::string closed;
-		for (auto const& i : state ()) {
-			if (!i.second) {
-				closed += (closed.empty () ? "" : ",") + i.first;
-			}
-		}
-		UIConfiguration::instance ().set_studio_closed_sections (closed);
-	}
-	static sigc::signal<void, std::string>& changed ()
-	{
-		static sigc::signal<void, std::string> c;
-		return c;
-	}
-	bool is_open () const
-	{
-		std::map<std::string, bool>::const_iterator i = state ().find (_key);
-		return i == state ().end () ? true : i->second;
-	}
-
-	ArdourButton   _header;
-	Gtk::VBox      _content;
-	std::string    _title;
-	std::string    _key;
-	bool           _expand;
-};
-
-}
-
 /* studio look: lay the strip out in sections.
  * Editor Inspector (embedded): name on top, Routing, Inserts & Sends,
  * Channel, Notes. Mixer strip: Routing, Inserts and Fader racks that
@@ -1583,21 +1492,33 @@ MixerStrip::build_inspector_layout ()
 
 	const std::string pfx = _embedded ? X_("inspector-") : X_("mixer-");
 
+	if (!_embedded) {
+		/* console look: the top row is just a thin strip in the track colour,
+		 * width and hide live in the name-button context menu */
+		width_button.set_no_show_all ();
+		hide_button.set_no_show_all ();
+		width_button.hide ();
+		hide_button.hide ();
+		number_label.set_elements (ArdourButton::Element (ArdourButton::Body | ArdourButton::Inactive));
+		number_label.set_size_request (-1, std::max (4, (int) rintf (5.f * UIConfiguration::instance ().get_ui_scale ())));
+		width_hide_box.set_spacing (0);
+	}
+
 	setup_auto_rw_buttons ();
 	Gtk::HBox* rw_box = manage (new Gtk::HBox (true, 2));
 	rw_box->pack_start (auto_read_button, true, true);
 	rw_box->pack_start (auto_write_button, true, true);
 	rw_box->show_all ();
 
-	InspectorSection* routing = manage (new InspectorSection (_("Routing"), pfx + X_("routing"), false));
+	StudioSection* routing = manage (new StudioSection (_("Routing"), pfx + X_("routing"), false));
 	routing->add_item (input_button_box);
 	routing->add_item (output_button);
 
-	InspectorSection* inserts = manage (new InspectorSection (_embedded ? _("Inserts & Sends") : _("Inserts"), pfx + X_("inserts"), true));
+	StudioSection* inserts = manage (new StudioSection (_embedded ? _("Inserts & Sends") : _("Inserts"), pfx + X_("inserts"), true));
 	inserts->add_item (_tmaster_widget);
 	inserts->add_item (processor_box, true);
 
-	InspectorSection* channel = manage (new InspectorSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), false));
+	StudioSection* channel = manage (new StudioSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), false));
 	channel->add_item (invert_button_box);
 	channel->add_item (panners);
 	channel->add_item (rec_mon_table);
@@ -1615,7 +1536,7 @@ MixerStrip::build_inspector_layout ()
 
 	/* fader zone stays at the bottom when racks above are collapsed */
 	if (_embedded) {
-		InspectorSection* notes = manage (new InspectorSection (_("Notes"), pfx + X_("notes"), false));
+		StudioSection* notes = manage (new StudioSection (_("Notes"), pfx + X_("notes"), false));
 		notes->add_item (_comment_button);
 		global_vpacker.pack_end (*notes, Gtk::PACK_SHRINK);
 		notes->show ();
@@ -1632,9 +1553,9 @@ MixerStrip::build_inspector_layout ()
 	channel->show ();
 
 	/* re-apply open/closed state now that the sections are packed */
-	routing->apply (pfx + X_("routing"));
-	inserts->apply (pfx + X_("inserts"));
-	channel->apply (pfx + X_("channel"));
+	routing->refresh ();
+	inserts->refresh ();
+	channel->refresh ();
 }
 
 void
@@ -2388,6 +2309,13 @@ MixerStrip::update_track_number_visibility ()
 {
 	DisplaySuspender ds;
 	bool show_label = _session->config.get_track_name_number();
+
+	if (_inspector_layout && !_embedded) {
+		/* studio console: always a thin colour strip, never a number */
+		number_label.set_size_request (-1, std::max (4, (int) rintf (5.f * UIConfiguration::instance ().get_ui_scale ())));
+		number_label.show ();
+		return;
+	}
 
 	if (_route && _route->is_master()) {
 		show_label = false;

@@ -28,6 +28,8 @@
 #include "ardour/region.h"
 #include "ardour/session.h"
 
+#include "pbd/stateful_diff_command.h"
+
 #include "gtkmm2ext/cairo_theme.h"
 #include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/utils.h"
@@ -39,11 +41,14 @@
 #include "selection.h"
 #include "ui_config.h"
 
+#include "widgets/tooltips.h"
+
 #include "pbd/i18n.h"
 
 using namespace ARDOUR;
 using namespace Gtk;
 using namespace Temporal;
+using namespace ArdourWidgets;
 
 static Gtk::Label*
 info_line_title (std::string const& txt)
@@ -60,9 +65,17 @@ Editor::setup_info_line ()
 		return 0;
 	}
 
-	info_start_clock  = manage (new AudioClock (X_("infoline-start"), true, X_("nudge"), false, false, false, false));
-	info_end_clock    = manage (new AudioClock (X_("infoline-end"), true, X_("nudge"), false, false, false, false));
-	info_length_clock = manage (new AudioClock (X_("infoline-length"), true, X_("nudge"), false, false, true, false));
+	info_start_clock  = manage (new AudioClock (X_("infoline-start"), true, X_("nudge"), true, false, false, false));
+	info_end_clock    = manage (new AudioClock (X_("infoline-end"), true, X_("nudge"), true, false, false, false));
+	info_length_clock = manage (new AudioClock (X_("infoline-length"), true, X_("nudge"), true, false, true, false));
+
+	info_start_clock->ValueChanged.connect (sigc::mem_fun (*this, &Editor::info_start_changed));
+	info_end_clock->ValueChanged.connect (sigc::mem_fun (*this, &Editor::info_end_changed));
+	info_length_clock->ValueChanged.connect (sigc::mem_fun (*this, &Editor::info_length_changed));
+
+	set_tooltip (*info_start_clock, _("Start of the selection. Click and type to move the selected regions."));
+	set_tooltip (*info_end_clock, _("End of the selection. Click and type to trim the end of the selected regions."));
+	set_tooltip (*info_length_clock, _("Length. Click and type to set the length of the selected regions."));
 
 	info_start_clock->set_mode (AudioClock::BBT);
 	info_end_clock->set_mode (AudioClock::BBT);
@@ -135,4 +148,86 @@ Editor::update_info_line ()
 
 	info_line_empty.hide ();
 	info_line_fields.show ();
+}
+
+/* Editing a value in the info line applies it to the selected regions,
+ * as one undoable operation.
+ */
+void
+Editor::info_start_changed ()
+{
+	RegionSelection const& rs (selection->regions);
+	if (rs.empty () || !_session) {
+		return;
+	}
+
+	timepos_t start = timepos_t::max (Temporal::AudioTime);
+	for (auto const& rv : rs) {
+		start = std::min (start, rv->region ()->position ());
+	}
+	timepos_t const target = info_start_clock->last_when ();
+	if (target == start) {
+		return;
+	}
+
+	begin_reversible_command (_("move regions"));
+	for (auto const& rv : rs) {
+		std::shared_ptr<Region> r = rv->region ();
+		r->clear_changes ();
+		/* keep the regions' relative positions */
+		r->set_position (target + start.distance (r->position ()));
+		_session->add_command (new PBD::StatefulDiffCommand (r));
+	}
+	commit_reversible_command ();
+	update_info_line ();
+}
+
+void
+Editor::info_end_changed ()
+{
+	RegionSelection const& rs (selection->regions);
+	if (rs.empty () || !_session) {
+		return;
+	}
+
+	/* the line shows the (exclusive) end, trim_end() wants the last position */
+	timepos_t const last = info_end_clock->last_when ().decrement ();
+
+	begin_reversible_command (_("trim region end"));
+	for (auto const& rv : rs) {
+		std::shared_ptr<Region> r = rv->region ();
+		if (last <= r->position ()) {
+			continue;
+		}
+		r->clear_changes ();
+		r->trim_end (last);
+		_session->add_command (new PBD::StatefulDiffCommand (r));
+	}
+	commit_reversible_command ();
+	update_info_line ();
+}
+
+void
+Editor::info_length_changed ()
+{
+	RegionSelection const& rs (selection->regions);
+	if (rs.empty () || !_session) {
+		return;
+	}
+
+	timecnt_t const len = info_length_clock->current_duration ();
+	if (len.is_zero ()) {
+		update_info_line ();
+		return;
+	}
+
+	begin_reversible_command (_("change region length"));
+	for (auto const& rv : rs) {
+		std::shared_ptr<Region> r = rv->region ();
+		r->clear_changes ();
+		r->trim_end ((r->position () + len).decrement ());
+		_session->add_command (new PBD::StatefulDiffCommand (r));
+	}
+	commit_reversible_command ();
+	update_info_line ();
 }
