@@ -87,6 +87,16 @@ private:
 	void remove (Module);
 	void add_knob (Gtk::Table&, int col, Module, uint32_t param, std::string const& label);
 
+	/* EQ comparison: the spectra of this track and another one (from the
+	 * analyzer, post fader) behind the EQ curve, with the frequencies where
+	 * both are loud marked */
+	std::weak_ptr<ARDOUR::Route> _compare;
+	bool                         _attached_self;
+	bool                         _attached_other;
+	PBD::ScopedConnection        _rta_connection;
+	void compare_with (std::weak_ptr<ARDOUR::Route>);
+	void stop_compare ();
+
 	bool curve_expose (GdkEventExpose*);
 	bool gr_expose (GdkEventExpose*);
 	void update_meter ();

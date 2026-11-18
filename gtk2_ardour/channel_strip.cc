@@ -28,6 +28,7 @@
 #include "ardour/plugin.h"
 #include "ardour/plugin_insert.h"
 #include "ardour/route.h"
+#include "ardour/dsp_filter.h"
 #include "ardour/session.h"
 
 #include "gtkmm2ext/utils.h"
@@ -38,6 +39,7 @@
 #include "channel_strip.h"
 #include "gui_object.h"
 #include "gui_thread.h"
+#include "rta_manager.h"
 #include "timers.h"
 #include "ui_config.h"
 
@@ -124,6 +126,8 @@ ChannelStrip::is_strip_processor (std::shared_ptr<Route> r, std::shared_ptr<Proc
 ChannelStrip::ChannelStrip ()
 	: _menu (0)
 	, _gr (0)
+	, _attached_self (false)
+	, _attached_other (false)
 {
 	set_spacing (3);
 
@@ -152,6 +156,7 @@ ChannelStrip::ChannelStrip ()
 	_gr_meter.set_size_request (-1, rintf (5.f * scale));
 	_gr_meter.signal_expose_event ().connect (sigc::mem_fun (*this, &ChannelStrip::gr_expose));
 	set_tooltip (_gr_meter, _("Gain reduction"));
+	set_tooltip (_curve, _("EQ response. Double-click: all bands; right-click: compare with another track"));
 
 	for (int m = 0; m < NModules; ++m) {
 		_body[m].set_spacing (1);
@@ -166,6 +171,7 @@ ChannelStrip::ChannelStrip ()
 
 ChannelStrip::~ChannelStrip ()
 {
+	stop_compare ();
 	_meter_connection.disconnect ();
 	delete _menu;
 }
@@ -173,6 +179,7 @@ ChannelStrip::~ChannelStrip ()
 void
 ChannelStrip::set_route (std::shared_ptr<Route> r)
 {
+	stop_compare ();
 	_route_connections.drop_connections ();
 	_route = r;
 	if (_route) {
@@ -392,7 +399,70 @@ ChannelStrip::curve_press (GdkEventButton* ev)
 		_proc[EQ]->ShowUI (); /* EMIT SIGNAL */
 		return true;
 	}
+	if (ev->type == GDK_BUTTON_PRESS && ev->button == 3 && _route) {
+		delete _menu;
+		_menu = new Gtk::Menu;
+		Gtk::Menu* sub = manage (new Gtk::Menu);
+		std::shared_ptr<RouteList const> routes = _route->session ().get_routes ();
+		for (auto const& r : *routes) {
+			if (r == _route || r->is_singleton () || r->is_foldbackbus ()) {
+				continue;
+			}
+			sub->items ().push_back (Gtk::Menu_Helpers::MenuElem (r->name (), sigc::bind (sigc::mem_fun (*this, &ChannelStrip::compare_with), std::weak_ptr<Route> (r))));
+		}
+		_menu->items ().push_back (Gtk::Menu_Helpers::MenuElem (_("Compare with"), *sub));
+		_menu->items ().push_back (Gtk::Menu_Helpers::MenuElem (_("Stop Comparing"), sigc::mem_fun (*this, &ChannelStrip::stop_compare)));
+		_menu->items ().back ().set_sensitive (!_compare.expired ());
+		_menu->popup (ev->button, ev->time);
+		return true;
+	}
 	return false;
+}
+
+void
+ChannelStrip::compare_with (std::weak_ptr<Route> wr)
+{
+	stop_compare ();
+	std::shared_ptr<Route> other = wr.lock ();
+	if (!other || !_route) {
+		return;
+	}
+	RTAManager* rm = RTAManager::instance ();
+	if (!rm->attached (_route)) {
+		rm->attach (_route);
+		_attached_self = true;
+	}
+	if (!rm->attached (other)) {
+		rm->attach (other);
+		_attached_other = true;
+	}
+	rm->set_active (true);
+	_compare = other;
+	rm->SignalReady.connect (_rta_connection, invalidator (*this), [this] () { _curve.queue_draw (); }, gui_context ());
+	set_tooltip (_curve, string_compose (_("Comparing with %1: red marks frequencies where both tracks are loud. Right-click to stop"), other->name ()));
+	_curve.queue_draw ();
+}
+
+void
+ChannelStrip::stop_compare ()
+{
+	_rta_connection.disconnect ();
+	RTAManager* rm = RTAManager::instance ();
+	std::shared_ptr<Route> other = _compare.lock ();
+	if (_attached_other && other) {
+		rm->remove (other);
+	}
+	if (_attached_self && _route) {
+		rm->remove (_route);
+	}
+	if ((_attached_self || _attached_other) && rm->rta ().empty ()) {
+		rm->set_active (false);
+	}
+	_attached_self  = false;
+	_attached_other = false;
+	_compare.reset ();
+	set_tooltip (_curve, _("EQ response. Double-click: all bands; right-click: compare with another track"));
+	_curve.queue_draw ();
 }
 
 bool
@@ -419,6 +489,86 @@ ChannelStrip::curve_expose (GdkEventExpose*)
 	cr->move_to (0, rint (h / 2) + 0.5);
 	cr->line_to (w, rint (h / 2) + 0.5);
 	cr->stroke ();
+
+	/* comparison spectra, scaled to the louder of the two (48 dB range) */
+	std::shared_ptr<Route> other = _compare.lock ();
+	if (other && _route) {
+		std::vector<float> spec[2];
+		for (auto const& r : RTAManager::instance ()->rta ()) {
+			int const k = r.route () == _route ? 0 : (r.route () == other ? 1 : -1);
+			if (k < 0 || r.analyzers ().empty ()) {
+				continue;
+			}
+			ARDOUR::DSP::PerceptualAnalyzer* a0 = r.analyzers ().front ();
+			int const n_bins = a0->fftlen ();
+			spec[k].assign ((size_t) w + 1, -200.f);
+			for (int i = 0; i <= n_bins; ++i) {
+				double const f = a0->freq_at_bin (i);
+				if (f < fmin || f > fmax) {
+					continue;
+				}
+				float db = -200;
+				for (auto a : r.analyzers ()) {
+					db = std::max (db, a->power_at_bin (i, 1.0, true));
+				}
+				int const px = std::max (0, std::min ((int) w, (int) rint (x_of (f))));
+				spec[k][px] = std::max (spec[k][px], db);
+			}
+			/* fill pixels between bins */
+			float last = -200;
+			for (auto& v : spec[k]) {
+				if (v <= -200) {
+					v = last;
+				} else {
+					last = v;
+				}
+			}
+		}
+		if (!spec[0].empty () && !spec[1].empty ()) {
+			float top = -200;
+			for (int k = 0; k < 2; ++k) {
+				for (float v : spec[k]) {
+					top = std::max (top, v);
+				}
+			}
+			float const range = 48;
+			auto sy = [&] (float db) { return h - std::max (0.f, std::min (1.f, (db - (top - range)) / range)) * (h - 2); };
+			float peak[2] = { -200, -200 };
+			for (int k = 0; k < 2; ++k) {
+				for (float v : spec[k]) {
+					peak[k] = std::max (peak[k], v);
+				}
+			}
+			/* overlap: both playing and within 15 dB of their own peak */
+			bool const both = peak[0] > -80 && peak[1] > -80;
+			cr->set_source_rgba (0.9, 0.15, 0.1, 0.35);
+			for (int px = 0; px <= (int) w && both; ++px) {
+				if (spec[0][px] > std::max (peak[0] - 15, -80.f) && spec[1][px] > std::max (peak[1] - 15, -80.f)) {
+					cr->rectangle (px, 0, 1, h);
+				}
+			}
+			cr->fill ();
+			for (int k = 0; k < 2; ++k) {
+				cr->move_to (0, h);
+				for (int px = 0; px <= (int) w; ++px) {
+					cr->line_to (px, sy (spec[k][px]));
+				}
+				cr->line_to (w, h);
+				cr->close_path ();
+				if (k == 0) {
+					cr->set_source_rgba (0.55, 0.6, 0.65, 0.35);
+				} else {
+					Gtkmm2ext::set_source_rgb_a (cr, other->presentation_info ().color (), 0.45);
+				}
+				cr->fill ();
+			}
+			cr->set_source_rgba (1, 1, 1, 0.6);
+			cr->select_font_face ("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_NORMAL);
+			cr->set_font_size (8 * UIConfiguration::instance ().get_ui_scale ());
+			cr->move_to (3, 9 * UIConfiguration::instance ().get_ui_scale ());
+			cr->show_text (string_compose (_("vs %1"), other->name ()));
+		}
+	}
 
 	if (!_proc[EQ]) {
 		return true;

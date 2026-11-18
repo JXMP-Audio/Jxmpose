@@ -54,7 +54,9 @@ Ardour project.
   compressor) right before the fader, later clicks bypass it; right-click
   to edit or remove. The EQ shows its response curve (double-click it for
   all bands), the compressor a gain reduction meter. The modules are not
-  listed with the inserts.
+  listed with the inserts. Right-click the EQ curve to compare with another
+  track: both spectra are drawn behind the curve and the frequencies where
+  both tracks are loud (e.g. kick and bass) are marked red.
 
 ## Building
 
