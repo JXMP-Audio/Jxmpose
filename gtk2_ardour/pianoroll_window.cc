@@ -46,6 +46,11 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	, score_button (_("Score Editor"))
 	, all_drums_button (_("All Drums"))
 	, drum_notation_button (_("Drum Notation"))
+	, dot_button (".")
+	, triplet_button ("3")
+	, _note_base (0)
+	, _note_dot (false)
+	, _note_triplet (false)
 {
 	pianoroll->set_session (&s);
 	set_default_size (1270, 700);
@@ -92,12 +97,12 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 
 	/* score input */
 	struct { const char* label; int64_t ticks; const char* tip; } values[] = {
-		{ _("Select"), 0,    _("Click notes to select them; Delete removes, Up/Down transposes (Ctrl: octave)") },
-		{ "1/1",       7680, _("Click into the staff to add whole notes") },
-		{ "1/2",       3840, _("Click into the staff to add half notes") },
-		{ "1/4",       1920, _("Click into the staff to add quarter notes") },
-		{ "1/8",       960,  _("Click into the staff to add eighth notes") },
-		{ "1/16",      480,  _("Click into the staff to add sixteenth notes") },
+		{ _("Select"), 0,    _("Select and drag notes; Delete removes, Up/Down transposes (Ctrl: octave) (key: 0)") },
+		{ "1/1",       7680, _("Whole notes: click into the staff to add, or set the length of the selected notes (key: 8)") },
+		{ "1/2",       3840, _("Half notes (key: 7)") },
+		{ "1/4",       1920, _("Quarter notes (key: 6)") },
+		{ "1/8",       960,  _("Eighth notes (key: 5)") },
+		{ "1/16",      480,  _("Sixteenth notes (key: 4)") },
 	};
 	for (auto const& v : values) {
 		ArdourWidgets::ArdourButton* b = manage (new ArdourWidgets::ArdourButton (v.label));
@@ -109,9 +114,19 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 		note_value_box.pack_start (*b, false, false);
 		note_value_buttons.push_back (std::make_pair (b, v.ticks));
 	}
+	dot_button.set_name ("tab button");
+	dot_button.set_corner_radius (2);
+	ArdourWidgets::set_tooltip (dot_button, _("Dotted note value (key: .)"));
+	dot_button.signal_clicked.connect ([this] () { _note_dot = !_note_dot; if (_note_dot) { _note_triplet = false; } apply_note_value (true); });
+	note_value_box.pack_start (dot_button, false, false, 4);
+	triplet_button.set_name ("tab button");
+	triplet_button.set_corner_radius (2);
+	ArdourWidgets::set_tooltip (triplet_button, _("Triplet: eighth and quarter notes as triplets (key: ;)"));
+	triplet_button.signal_clicked.connect ([this] () { _note_triplet = !_note_triplet; if (_note_triplet) { _note_dot = false; } apply_note_value (true); });
+	note_value_box.pack_start (triplet_button, false, false);
 	note_value_box.set_spacing (2);
 	mode_bar.pack_start (note_value_box, false, false, 12);
-	set_note_value (0);
+	apply_note_value (false);
 	mode_bar.set_spacing (2);
 	mode_bar.set_border_width (3);
 
@@ -207,6 +222,8 @@ PianorollWindow::set_region (std::shared_ptr<MidiTrack> track, std::shared_ptr<M
 	pianoroll->add_region (region, track);
 	pianoroll->set_region (region);
 	_region = region;
+	_track  = track;
+	score_view.set_track (track);
 	if (_mode == ScoreEditor) {
 		score_view.set_region (region);
 	}
@@ -238,9 +255,29 @@ PianorollWindow::remove_regions ()
 void
 PianorollWindow::set_note_value (int64_t ticks)
 {
-	score_view.set_insert_length (ticks);
+	_note_base = ticks;
+	apply_note_value (true);
+}
+
+void
+PianorollWindow::apply_note_value (bool to_selection)
+{
+	int64_t len = _note_base;
+	if (len && _note_dot) {
+		len = len * 3 / 2;
+	} else if (len && _note_triplet && (len == 1920 || len == 960)) {
+		len = len * 2 / 3;
+	}
+	score_view.set_insert_length (len);
 	for (auto const& b : note_value_buttons) {
-		b.first->set_active (b.second == ticks);
+		b.first->set_active (b.second == _note_base);
+	}
+	dot_button.set_active (_note_dot);
+	triplet_button.set_active (_note_triplet);
+
+	/* Dorico-style: picking a value with notes selected changes their length */
+	if (to_selection && len > 0 && score_view.has_selection ()) {
+		score_view.set_selection_length (len);
 	}
 }
 
@@ -251,6 +288,29 @@ PianorollWindow::on_key_press_event (GdkEventKey* ev)
 	if (_mode == ScoreEditor) {
 		if (score_view.handle_key (ev)) {
 			return true;
+		}
+		/* note values like in notation programs: 4 = 16th ... 8 = whole */
+		if (!(ev->state & (Gtkmm2ext::Keyboard::PrimaryModifier | Gtkmm2ext::Keyboard::SecondaryModifier))) {
+			switch (ev->keyval) {
+			case GDK_4: set_note_value (480);  return true;
+			case GDK_5: set_note_value (960);  return true;
+			case GDK_6: set_note_value (1920); return true;
+			case GDK_7: set_note_value (3840); return true;
+			case GDK_8: set_note_value (7680); return true;
+			case GDK_0: set_note_value (0);    return true;
+			case GDK_period:
+				_note_dot = !_note_dot;
+				if (_note_dot) { _note_triplet = false; }
+				apply_note_value (true);
+				return true;
+			case GDK_semicolon:
+				_note_triplet = !_note_triplet;
+				if (_note_triplet) { _note_dot = false; }
+				apply_note_value (true);
+				return true;
+			default:
+				break;
+			}
 		}
 		/* undo/redo the region edits here, not in the main editor */
 		if (ev->state & Gtkmm2ext::Keyboard::PrimaryModifier) {

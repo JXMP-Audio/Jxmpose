@@ -33,8 +33,10 @@ Ardour project.
   subfolders; a collapsed folder keeps its instrument bus visible.
 - **MIDI editor** — switch between *Key*, *Drum* (one row per drum sound)
   and *Score* (music notation, also as drum notation) for the same region.
-  In the score, pick a note value and click notes into the staff; click to
-  select, Delete removes, Up/Down transposes, Ctrl+Z undoes.
+  In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and
+  click notes into the staff; click or drag notes to select and move them,
+  pick a value to change their length, Delete removes, Up/Down transposes,
+  Ctrl+Z undoes. Eighth-note triplets are recognised and written as such.
 
 ## Building
 

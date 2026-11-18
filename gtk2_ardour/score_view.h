@@ -34,6 +34,7 @@
 
 namespace ARDOUR {
 	class MidiRegion;
+	class MidiTrack;
 }
 
 namespace PBD {
@@ -73,6 +74,12 @@ public:
 	void set_insert_length (int64_t len) { _insert_len = len; }
 	int64_t insert_length () const { return _insert_len; }
 
+	/** the track that plays notes while editing */
+	void set_track (std::shared_ptr<ARDOUR::MidiTrack> t) { _track = t; }
+	bool has_selection () const { return !_selection.empty (); }
+	/** give the selected notes a new length (ticks) */
+	void set_selection_length (int64_t);
+
 	/** keyboard editing; @return true if handled */
 	bool handle_key (GdkEventKey*);
 
@@ -91,6 +98,7 @@ public:
 		std::vector<uint8_t> pitches; ///< empty: rest
 		std::vector<bool>    tie_out; ///< per pitch: tied into the next piece
 		std::vector<NotePtr> notes;   ///< per pitch: the model note
+		bool                 tuplet = false; ///< part of an eighth-note triplet beat
 	};
 
 	/** a note clipped to one bar */
@@ -98,6 +106,7 @@ public:
 		int64_t start, end;  ///< ticks from bar start
 		uint8_t pitch;
 		bool    tie_out;     ///< continues in the next bar
+		bool    hit;         ///< shorter than a 16th (drum hit, staccato)
 		NotePtr note;
 	};
 
@@ -115,6 +124,8 @@ protected:
 	void on_size_allocate (Gtk::Allocation&);
 	bool on_scroll_event (GdkEventScroll*);
 	bool on_button_press_event (GdkEventButton*);
+	bool on_button_release_event (GdkEventButton*);
+	bool on_motion_notify_event (GdkEventMotion*);
 
 private:
 	std::shared_ptr<ARDOUR::MidiRegion> _region;
@@ -153,6 +164,20 @@ private:
 	};
 	std::vector<Hit> _hits; ///< note heads as drawn
 
+	std::shared_ptr<ARDOUR::MidiTrack> _track;
+
+	/* dragging selected notes */
+	NotePtr _drag_note;      ///< the note that was grabbed
+	double  _drag_x0, _drag_y0;
+	bool    _dragging;
+	int64_t _drag_dt;        ///< ticks
+	int     _drag_dp;        ///< semitones
+
+	int64_t note_tick (NotePtr const&) const;
+	bool    position_of (int64_t tick, uint8_t pitch, double& x, double& y) const;
+	int64_t snap_step () const;
+	void    play (NotePtr const&);
+
 	bool    pitch_at (double x, double y, size_t& bar, uint8_t& pitch) const;
 	int64_t time_in_bar (Bar const&, double x) const;
 	void    add_note (int64_t tick, uint8_t pitch);
@@ -162,7 +187,15 @@ private:
 	void model_changed ();
 	void rebuild ();
 	void layout ();
-	void build_bar_pieces (Bar&, int staff, std::vector<Seg> const&);
+	void build_bar_pieces (Bar&, size_t bar_index, int staff, std::vector<Seg> const&);
+
+	/* triplets: beats (index from the first bar) written as eighth-note triplets */
+	std::set<int64_t> _triplet_beats[2];
+	int64_t beat_ticks () const;
+	bool    triplet_beat (int staff, int64_t abs_tick) const;
+	/** notatable pieces (start, len, tuplet) of a duration inside one bar */
+	std::vector<std::pair<std::pair<int64_t, int64_t>, bool>> split_piece (size_t bar_index, int staff, int64_t start, int64_t len, bool dots) const;
+	static void piece_value (Piece const&, int64_t& base, bool& dotted);
 
 	double system_height () const;
 	double staff_y (System const&, int staff) const;
