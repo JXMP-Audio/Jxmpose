@@ -22,6 +22,7 @@
 #include "ardour/midi_track.h"
 
 #include "gtkmm2ext/doi.h"
+#include "gtkmm2ext/keyboard.h"
 
 #include "ardour_ui.h"
 #include "chord_box.h"
@@ -88,6 +89,29 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 		score_view.set_percussion (yn);
 	});
 	mode_bar.pack_end (drum_notation_button, false, false);
+
+	/* score input */
+	struct { const char* label; int64_t ticks; const char* tip; } values[] = {
+		{ _("Select"), 0,    _("Click notes to select them; Delete removes, Up/Down transposes (Ctrl: octave)") },
+		{ "1/1",       7680, _("Click into the staff to add whole notes") },
+		{ "1/2",       3840, _("Click into the staff to add half notes") },
+		{ "1/4",       1920, _("Click into the staff to add quarter notes") },
+		{ "1/8",       960,  _("Click into the staff to add eighth notes") },
+		{ "1/16",      480,  _("Click into the staff to add sixteenth notes") },
+	};
+	for (auto const& v : values) {
+		ArdourWidgets::ArdourButton* b = manage (new ArdourWidgets::ArdourButton (v.label));
+		b->set_name ("tab button");
+		b->set_corner_radius (2);
+		ArdourWidgets::set_tooltip (*b, v.tip);
+		int64_t const t = v.ticks;
+		b->signal_clicked.connect ([this, t] () { set_note_value (t); });
+		note_value_box.pack_start (*b, false, false);
+		note_value_buttons.push_back (std::make_pair (b, v.ticks));
+	}
+	note_value_box.set_spacing (2);
+	mode_bar.pack_start (note_value_box, false, false, 12);
+	set_note_value (0);
 	mode_bar.set_spacing (2);
 	mode_bar.set_border_width (3);
 
@@ -110,6 +134,8 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	all_drums_button.hide ();
 	drum_notation_button.set_no_show_all ();
 	drum_notation_button.hide ();
+	note_value_box.set_no_show_all ();
+	note_value_box.hide ();
 	key_button.set_active (true);
 }
 
@@ -130,9 +156,13 @@ PianorollWindow::set_editor_mode (EditorMode m)
 		bool const drums = pianoroll->note_mode () == ARDOUR::Percussive || pianoroll->visible_channel () == 9;
 		drum_notation_button.set_active (drums);
 		score_view.set_percussion (drums);
+		score_view.set_history (&pianoroll->history ());
+		score_view.set_channel (pianoroll->visible_channel ());
 		drum_notation_button.show ();
+		note_value_box.show ();
 	} else {
 		drum_notation_button.hide ();
+		note_value_box.hide ();
 	}
 
 	if (m == ScoreEditor) {
@@ -205,9 +235,39 @@ PianorollWindow::remove_regions ()
 	pianoroll->remove_regions ();
 }
 
+void
+PianorollWindow::set_note_value (int64_t ticks)
+{
+	score_view.set_insert_length (ticks);
+	for (auto const& b : note_value_buttons) {
+		b.first->set_active (b.second == ticks);
+	}
+}
+
 bool
 PianorollWindow::on_key_press_event (GdkEventKey* ev)
 {
+	/* score editing keys first (Delete, arrows, Escape) */
+	if (_mode == ScoreEditor) {
+		if (score_view.handle_key (ev)) {
+			return true;
+		}
+		/* undo/redo the region edits here, not in the main editor */
+		if (ev->state & Gtkmm2ext::Keyboard::PrimaryModifier) {
+			if (ev->keyval == GDK_z || ev->keyval == GDK_Z) {
+				if (ev->state & Gtkmm2ext::Keyboard::TertiaryModifier) {
+					pianoroll->redo ();
+				} else {
+					pianoroll->undo ();
+				}
+				return true;
+			}
+			if (ev->keyval == GDK_y || ev->keyval == GDK_Y) {
+				pianoroll->redo ();
+				return true;
+			}
+		}
+	}
 	return ARDOUR_UI::instance()->key_event_handler (ev, this);
 }
 

@@ -28,6 +28,8 @@
 #include "ardour/midi_model.h"
 #include "ardour/midi_region.h"
 
+#include "pbd/history_owner.h"
+
 #include "gtkmm2ext/keyboard.h"
 
 #include "gui_thread.h"
@@ -143,7 +145,7 @@ bottom_line (int staff)
 
 /** split a duration into notatable values (16th grid), aligned to the beat */
 std::vector<std::pair<int64_t, int64_t>>
-split_duration (int64_t start, int64_t len, int64_t bar_len)
+split_duration (int64_t start, int64_t len, int64_t bar_len, bool dots = true)
 {
 	struct V { int64_t len, align; };
 	static const V values[] = {
@@ -157,6 +159,16 @@ split_duration (int64_t start, int64_t len, int64_t bar_len)
 		for (auto const& v : values) {
 			if (v.len == whole && bar_len < whole) {
 				continue;
+			}
+			bool const dotted = v.len != v.align;
+			if (dotted) {
+				/* rests are written without dots; a dotted note must
+				 * not run over the next boundary of twice its base
+				 * value (beat or half bar), to keep the beats visible */
+				int64_t const span = 2 * v.align;
+				if (!dots || start + v.len > (start / span + 1) * span) {
+					continue;
+				}
 			}
 			if (v.len <= len && start % v.align == 0) {
 				r.push_back (std::make_pair (start, v.len));
@@ -203,8 +215,15 @@ ScoreView::ScoreView ()
 	, _beat_value (4)
 	, _first_bar (1)
 	, _layout_width (0)
+	, _history (0)
+	, _channel (0)
+	, _insert_len (0)
+	, _origin (0)
+	, _r_start (0)
+	, _r_end (0)
 {
-	add_events (Gdk::SCROLL_MASK);
+	add_events (Gdk::SCROLL_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::KEY_PRESS_MASK);
+	set_can_focus (true);
 }
 
 ScoreView::~ScoreView ()
@@ -278,6 +297,9 @@ ScoreView::rebuild ()
 	int64_t const origin  = pos.beats ().to_ticks () - ((bbt.beats - 1) * div_ticks + bbt.ticks * 4 / _beat_value);
 	int64_t const r_start = pos.beats ().to_ticks () - origin;
 	int64_t const r_end   = end.beats ().to_ticks () - origin;
+	_origin  = origin;
+	_r_start = r_start;
+	_r_end   = r_end;
 
 	size_t const n_bars = std::max<int64_t> (1, (r_end + _bar_len - 1) / _bar_len);
 
@@ -288,6 +310,15 @@ ScoreView::rebuild ()
 
 	{
 		MidiModel::ReadLock lm (model->read_lock ());
+
+		/* forget selected notes that are gone */
+		std::set<NotePtr> still;
+		for (auto const& n : model->notes ()) {
+			if (_selection.count (n)) {
+				still.insert (n);
+			}
+		}
+		_selection.swap (still);
 
 		for (auto const& n : model->notes ()) {
 			int64_t s = _region->source_beats_to_absolute_beats (n->time ()).to_ticks () - origin;
@@ -320,6 +351,7 @@ ScoreView::rebuild ()
 				sg.end     = std::min (e, bar_end) - b * _bar_len;
 				sg.pitch   = n->note ();
 				sg.tie_out = e > bar_end && b + 1 < n_bars;
+				sg.note    = n;
 				segs[staff][b].push_back (sg);
 				s = bar_end;
 			}
@@ -388,7 +420,7 @@ ScoreView::build_bar_pieces (Bar& bar, int staff, std::vector<Seg> const& in)
 			out.push_back (p);
 			return;
 		}
-		for (auto const& v : split_duration (s, len, _bar_len)) {
+		for (auto const& v : split_duration (s, len, _bar_len, false)) {
 			Piece p;
 			p.start = v.first;
 			p.len   = v.second;
@@ -435,12 +467,14 @@ ScoreView::build_bar_pieces (Bar& bar, int staff, std::vector<Seg> const& in)
 
 		std::vector<uint8_t> pitches;
 		std::vector<bool>    ties;
+		std::vector<NotePtr> notes;
 		for (size_t k = i; k < j; ++k) {
 			if (std::find (pitches.begin (), pitches.end (), segs[k].pitch) != pitches.end ()) {
 				continue;
 			}
 			pitches.push_back (segs[k].pitch);
 			ties.push_back (segs[k].tie_out && en == _bar_len);
+			notes.push_back (segs[k].note);
 		}
 
 		auto const parts = split_duration (st, en - st, _bar_len);
@@ -449,6 +483,7 @@ ScoreView::build_bar_pieces (Bar& bar, int staff, std::vector<Seg> const& in)
 			p.start   = parts[k].first;
 			p.len     = parts[k].second;
 			p.pitches = pitches;
+			p.notes   = notes;
 			p.tie_out = (k + 1 < parts.size ()) ? std::vector<bool> (pitches.size (), true) : ties;
 			out.push_back (p);
 		}
@@ -507,6 +542,13 @@ ScoreView::layout ()
 		bool const last = (b + n >= _bars.size ());
 		double const room = margin + avail - s.x0;
 		s.stretch = (!last && w > 0) ? std::max (1., room / w) : std::min (1.5, std::max (1., room / std::max (1., w)));
+
+		double bx = s.x0;
+		for (size_t k = 0; k < n; ++k) {
+			_bars[b + k].x      = bx;
+			_bars[b + k].system = _systems.size ();
+			bx += _bars[b + k].width * s.stretch;
+		}
 		_systems.push_back (s);
 
 		b += n;
@@ -575,6 +617,8 @@ void
 ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 {
 	Gtk::Allocation const a (get_allocation ());
+
+	_hits.clear ();
 
 	/* paper */
 	cr->set_source_rgb (0.97, 0.96, 0.94);
@@ -900,7 +944,32 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 								h = head;
 							}
 						}
+						/* the model note behind this head */
+						NotePtr note;
+						for (size_t j = 0; j < p.pitches.size () && j < p.notes.size (); ++j) {
+							int dd, aa;
+							pos (p.pitches[j], dd, aa);
+							if (dd == ds[m].first && (_percussion ? (int) p.pitches[j] : aa) == ds[m].second) {
+								note = p.notes[j];
+							}
+						}
+						bool const sel = note && _selection.count (note);
+						if (sel) {
+							cr->set_source_rgb (0.15, 0.45, 0.95);
+						}
 						draw_glyph (cr, h, x + head_dx[m], y_of (ds[m].first));
+						if (sel) {
+							cr->set_source_rgb (0.1, 0.1, 0.1);
+						}
+						if (note) {
+							Hit ht;
+							ht.x0   = x + head_dx[m] - sp * 0.2;
+							ht.x1   = x + head_dx[m] + headw + sp * 0.2;
+							ht.y0   = y_of (ds[m].first) - sp * 0.6;
+							ht.y1   = y_of (ds[m].first) + sp * 0.6;
+							ht.note = note;
+							_hits.push_back (ht);
+						}
 					}
 
 					/* dots */
@@ -1046,4 +1115,248 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 	}
 
 	(void) a;
+}
+
+/* ---- editing ---- */
+
+int64_t
+ScoreView::time_in_bar (Bar const& bar, double x) const
+{
+	System const& sys (_systems[bar.system]);
+	double const ox = (x - bar.x) / sys.stretch - _sp * 1.4;
+
+	/* piecewise linear between the onsets, the last one runs to the bar end */
+	std::vector<double>  xs (bar.onset_x);
+	std::vector<int64_t> ts (bar.onsets);
+	if (xs.empty () || ts.front () != 0) {
+		xs.insert (xs.begin (), 0.);
+		ts.insert (ts.begin (), 0);
+	}
+	xs.push_back (bar.width - _sp * 1.8);
+	ts.push_back (_bar_len);
+
+	if (ox <= xs.front ()) {
+		return 0;
+	}
+	for (size_t k = 0; k + 1 < xs.size (); ++k) {
+		if (ox < xs[k + 1]) {
+			double const f = (xs[k + 1] > xs[k]) ? (ox - xs[k]) / (xs[k + 1] - xs[k]) : 0;
+			return ts[k] + (int64_t) (f * (ts[k + 1] - ts[k]));
+		}
+	}
+	return _bar_len - grid;
+}
+
+bool
+ScoreView::pitch_at (double x, double y, size_t& bar_index, uint8_t& pitch) const
+{
+	if (_systems.empty ()) {
+		return false;
+	}
+	int const si = std::max (0, std::min ((int) _systems.size () - 1, (int) floor ((y - _systems.front ().y) / system_height ())));
+	System const& sys (_systems[si]);
+
+	/* which bar */
+	bool found = false;
+	for (size_t b = sys.first_bar; b < sys.first_bar + sys.n_bars; ++b) {
+		if (x >= _bars[b].x && x < _bars[b].x + _bars[b].width * sys.stretch) {
+			bar_index = b;
+			found     = true;
+			break;
+		}
+	}
+	if (!found) {
+		return false;
+	}
+
+	/* which staff: the nearer middle line */
+	int st = 0;
+	if (!_percussion) {
+		double const m0 = staff_y (sys, 0) + 2 * _sp;
+		double const m1 = staff_y (sys, 1) + 2 * _sp;
+		st = std::fabs (y - m0) <= std::fabs (y - m1) ? 0 : 1;
+	}
+	double const top    = staff_y (sys, st);
+	double const bottom = top + 4 * _sp;
+	if (y < top - 6 * _sp || y > bottom + 6 * _sp) {
+		return false;
+	}
+	int const ref = _percussion ? bottom_line (0) : bottom_line (st);
+	int const d   = ref + (int) lrint ((bottom - y) / (_sp / 2));
+
+	if (_percussion) {
+		/* the drum on that staff position */
+		static const int drum_at[][2] = {
+			{ 29, 44 }, { 31, 36 }, { 32, 41 }, { 33, 43 }, { 34, 45 }, { 35, 38 },
+			{ 36, 48 }, { 37, 50 }, { 38, 51 }, { 39, 42 }, { 40, 49 },
+		};
+		int best = 38, dist = 1000;
+		for (auto const& da : drum_at) {
+			if (std::abs (da[0] - d) < dist) {
+				dist = std::abs (da[0] - d);
+				best = da[1];
+			}
+		}
+		pitch = best;
+		return true;
+	}
+
+	static const int semis[7] = { 0, 2, 4, 5, 7, 9, 11 };
+	int const octave = (int) floor (d / 7.);
+	int const letter = d - octave * 7;
+	int const p      = (octave + 1) * 12 + semis[letter];
+	if (p < 0 || p > 127) {
+		return false;
+	}
+	pitch = p;
+	return true;
+}
+
+void
+ScoreView::add_note (int64_t tick, uint8_t pitch)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history) {
+		return;
+	}
+	int64_t len = std::min (_insert_len, _r_end - tick);
+	if (len <= 0) {
+		return;
+	}
+	Beats const start = _region->absolute_time_to_source_beats (timepos_t (Beats::ticks (_origin + tick)));
+
+	/* the same note is already there: select it instead of stacking a copy */
+	{
+		MidiModel::ReadLock lm (model->read_lock ());
+		for (auto const& e : model->notes ()) {
+			if (e->note () == pitch && e->time () == start) {
+				_selection.clear ();
+				_selection.insert (e);
+				queue_draw ();
+				return;
+			}
+		}
+	}
+
+	NotePtr n (new Evoral::Note<Beats> (_channel, start, Beats::ticks (len), pitch, 100));
+
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("add note"));
+	cmd->add (n);
+	model->apply_diff_command_as_commit (*_history, cmd);
+
+	_selection.clear ();
+	_selection.insert (n);
+	rebuild ();
+}
+
+void
+ScoreView::delete_selection ()
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history || _selection.empty ()) {
+		return;
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("delete notes"));
+	for (auto const& n : _selection) {
+		cmd->remove (n);
+	}
+	_selection.clear ();
+	model->apply_diff_command_as_commit (*_history, cmd);
+	rebuild ();
+}
+
+void
+ScoreView::transpose_selection (int semitones)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history || _selection.empty ()) {
+		return;
+	}
+	for (auto const& n : _selection) {
+		int const p = n->note () + semitones;
+		if (p < 0 || p > 127) {
+			return;
+		}
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("transpose"));
+	for (auto const& n : _selection) {
+		cmd->change (n, MidiModel::NoteDiffCommand::NoteNumber, (uint8_t) (n->note () + semitones));
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	rebuild ();
+}
+
+bool
+ScoreView::on_button_press_event (GdkEventButton* ev)
+{
+	grab_focus ();
+
+	if (ev->button != 1) {
+		return false;
+	}
+
+	bool const add = ev->state & Gtkmm2ext::Keyboard::TertiaryModifier;
+
+	/* a note head: select it */
+	for (auto h = _hits.rbegin (); h != _hits.rend (); ++h) {
+		if (ev->x >= h->x0 && ev->x <= h->x1 && ev->y >= h->y0 && ev->y <= h->y1) {
+			if (add) {
+				if (_selection.count (h->note)) {
+					_selection.erase (h->note);
+				} else {
+					_selection.insert (h->note);
+				}
+			} else {
+				_selection.clear ();
+				_selection.insert (h->note);
+			}
+			queue_draw ();
+			return true;
+		}
+	}
+
+	/* empty place: add a note when a note value is picked */
+	size_t  b;
+	uint8_t pitch;
+	if (_insert_len > 0 && pitch_at (ev->x, ev->y, b, pitch)) {
+		int64_t const step = std::min (_insert_len, quarter);
+		int64_t const t    = (time_in_bar (_bars[b], ev->x) / step) * step;
+		int64_t const tick = b * _bar_len + t;
+		if (tick >= _r_start && tick < _r_end) {
+			add_note (tick, pitch);
+			return true;
+		}
+	}
+
+	if (!add && !_selection.empty ()) {
+		_selection.clear ();
+		queue_draw ();
+	}
+	return true;
+}
+
+bool
+ScoreView::handle_key (GdkEventKey* ev)
+{
+	bool const octave = ev->state & Gtkmm2ext::Keyboard::PrimaryModifier;
+
+	switch (ev->keyval) {
+	case GDK_Delete:
+	case GDK_BackSpace:
+		delete_selection ();
+		return true;
+	case GDK_Up:
+		transpose_selection (octave ? 12 : 1);
+		return !_selection.empty ();
+	case GDK_Down:
+		transpose_selection (octave ? -12 : -1);
+		return !_selection.empty ();
+	case GDK_Escape:
+		_selection.clear ();
+		queue_draw ();
+		return true;
+	default:
+		break;
+	}
+	return false;
 }

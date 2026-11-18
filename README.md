@@ -32,8 +32,9 @@ Ardour project.
 - **Track folders** — route groups shown as collapsible folders with
   subfolders; a collapsed folder keeps its instrument bus visible.
 - **MIDI editor** — switch between *Key*, *Drum* (one row per drum sound)
-  and *Score* (music notation, also as drum notation; view only for now)
-  for the same region.
+  and *Score* (music notation, also as drum notation) for the same region.
+  In the score, pick a note value and click notes into the staff; click to
+  select, Delete removes, Up/Down transposes, Ctrl+Z undoes.
 
 ## Building
 

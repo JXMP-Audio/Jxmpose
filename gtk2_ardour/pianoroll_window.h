@@ -75,4 +75,9 @@ private:
 	ArdourWidgets::ArdourButton score_button;
 	ArdourWidgets::ArdourButton all_drums_button;
 	ArdourWidgets::ArdourButton drum_notation_button;
+
+	/* score input: select, or the note value that a click adds */
+	Gtk::HBox note_value_box;
+	std::vector<std::pair<ArdourWidgets::ArdourButton*, int64_t>> note_value_buttons;
+	void set_note_value (int64_t ticks);
 };
