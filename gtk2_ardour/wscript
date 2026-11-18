@@ -84,6 +84,7 @@ gtk2_ardour_sources = [
         'editing_context.cc',
         'editor.cc',
         'editor_info_line.cc',
+        'channel_strip.cc',
         'quick_controls.cc',
         'studio_section.cc',
         'editor_actions.cc',

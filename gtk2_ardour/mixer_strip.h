@@ -88,6 +88,7 @@ class AutomationController;
 class TriggerBoxWidget;
 
 class QuickControls;
+class ChannelStrip;
 
 class MixerStrip : public AxisView, public RouteUI, public Gtk::EventBox
 {
@@ -205,6 +206,7 @@ private:
 	ProcessorBox processor_box;
 	ProcessorBox* _sends_box; // studio Inspector only
 	QuickControls* _quick_controls; // studio Inspector only
+	ChannelStrip*  _channel_strip;  // studio Inspector only
 	GainMeter    gpm;
 	PannerUI     panners;
 

@@ -82,6 +82,7 @@
 #include "context_menu_helper.h"
 #include "enums_convert.h"
 #include "mixer_strip.h"
+#include "channel_strip.h"
 #include "quick_controls.h"
 #include "studio_section.h"
 #include "mixer_strip_decor.h"
@@ -122,6 +123,7 @@ MixerStrip::MixerStrip (Mixer_UI& mx, Session* sess, bool in_mixer)
 	, processor_box (sess, std::bind (&MixerStrip::plugin_selector, this), mx.selection(), this, in_mixer)
 	, _sends_box (0)
 	, _quick_controls (0)
+	, _channel_strip (0)
 	, gpm (sess, 250)
 	, panners (sess)
 	, button_size_group (Gtk::SizeGroup::create (Gtk::SIZE_GROUP_HORIZONTAL))
@@ -161,6 +163,7 @@ MixerStrip::MixerStrip (Mixer_UI& mx, Session* sess, std::shared_ptr<Route> rt, 
 	, processor_box (sess, std::bind (&MixerStrip::plugin_selector, this), mx.selection(), this, in_mixer)
 	, _sends_box (0)
 	, _quick_controls (0)
+	, _channel_strip (0)
 	, gpm (sess, 250)
 	, panners (sess)
 	, button_size_group (Gtk::SizeGroup::create (Gtk::SIZE_GROUP_HORIZONTAL))
@@ -564,6 +567,9 @@ MixerStrip::set_route (std::shared_ptr<Route> rt)
 	}
 	if (_quick_controls) {
 		_quick_controls->set_route (rt);
+	}
+	if (_channel_strip) {
+		_channel_strip->set_route (rt);
 	}
 
 	revert_to_default_display ();
@@ -1547,6 +1553,7 @@ MixerStrip::build_inspector_layout ()
 
 	StudioSection* sends = 0;
 	StudioSection* quick = 0;
+	StudioSection* strip = 0;
 	if (_embedded) {
 		/* Inspector: inserts and sends in separate sections */
 		processor_box.set_display_filter (ProcessorBox::InsertsOnly);
@@ -1568,6 +1575,13 @@ MixerStrip::build_inspector_layout ()
 		}
 		quick = manage (new StudioSection (_("Quick Controls"), pfx + X_("quick-controls"), false));
 		quick->add_item (*_quick_controls);
+
+		_channel_strip = manage (new ChannelStrip);
+		if (_route) {
+			_channel_strip->set_route (_route);
+		}
+		strip = manage (new StudioSection (_("Channel Strip"), pfx + X_("channel-strip"), false));
+		strip->add_item (*_channel_strip);
 	}
 
 	StudioSection* channel = manage (new StudioSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), true));
@@ -1585,6 +1599,9 @@ MixerStrip::build_inspector_layout ()
 	global_vpacker.set_spacing (4);
 	global_vpacker.pack_start (*routing, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (*inserts, false, false);
+	if (strip) {
+		global_vpacker.pack_start (*strip, false, false);
+	}
 	if (sends) {
 		global_vpacker.pack_start (*sends, false, false);
 	}
@@ -1621,6 +1638,10 @@ MixerStrip::build_inspector_layout ()
 	if (quick) {
 		quick->show ();
 		quick->refresh ();
+	}
+	if (strip) {
+		strip->show ();
+		strip->refresh ();
 	}
 }
 

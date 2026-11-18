@@ -49,6 +49,13 @@ Ardour project.
   knob and pick any parameter of any plugin on the track; Ctrl+middle-click
   learns a MIDI controller. Assignments are saved with the session.
 
+- **Channel strip** — Gate, EQ and Comp buttons in the Inspector. The first
+  click adds the module (bundled ACE expander, four band EQ with shelves,
+  compressor) right before the fader, later clicks bypass it; right-click
+  to edit or remove. The EQ shows its response curve (double-click it for
+  all bands), the compressor a gain reduction meter. The modules are not
+  listed with the inserts.
+
 ## Building
 
 JXMPOSE builds exactly like Ardour, with `waf`. A **full git clone with tags**

@@ -94,6 +94,7 @@
 #include "plugin_selector.h"
 #include "plugin_ui.h"
 #include "port_insert_ui.h"
+#include "channel_strip.h"
 #include "processor_box.h"
 #include "processor_selection.h"
 #include "public_editor.h"
@@ -3201,7 +3202,14 @@ ProcessorBox::set_display_filter (DisplayFilter f)
 bool
 ProcessorBox::filter_processor (std::shared_ptr<Processor> p) const
 {
-	if (_display_filter == AllProcessors || !p) {
+	if (!p) {
+		return true;
+	}
+	if (ChannelStrip::is_strip_processor (_route, p)) {
+		/* shown in the channel strip */
+		return false;
+	}
+	if (_display_filter == AllProcessors) {
 		return true;
 	}
 	bool const is_fader = _route && p == _route->amp ();
@@ -3446,8 +3454,9 @@ ProcessorBox::compute_processor_sort_keys ()
 		}
 	}
 
-	if (_display_filter != AllProcessors) {
-		/* this box shows only a subset of the visible processors. Route::reorder_processors()
+	{
+		/* this box may show only a subset of the visible processors (a display filter,
+		 * channel strip modules). Route::reorder_processors()
 		 * treats visible processors missing from the list as deleted, so merge: keep the
 		 * others where they are and fill the slots of the shown ones in the new order.
 		 */
