@@ -492,7 +492,7 @@ MasterMeterPanel::Display::render_loudness (Cairo::RefPtr<Cairo::Context> const&
 		float d = _p._integrated - target;
 		char buf[32];
 		snprintf (buf, sizeof (buf), "%+.1f LU", d);
-		set_color (cr, fabs (d) <= 1.f ? "alert:green" : "widget:orange");
+		set_color (cr, d > 1.f ? "alert:red" : (d < -1.f ? "widget:orange" : "alert:green"));
 		text (*this, cr, buf, label_font, w / 2, y, 0);
 	}
 	y += lh / 2;
