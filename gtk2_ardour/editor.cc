@@ -127,6 +127,7 @@
 #include "editor_sections.h"
 #include "editor_snapshots.h"
 #include "master_meter_panel.h"
+#include "plugin_browser.h"
 #include "editor_sources.h"
 #include "editor_summary.h"
 #include "editor_vsummary.h"
@@ -348,6 +349,7 @@ Editor::Editor ()
 	, _sections (nullptr)
 	, _snapshots (nullptr)
 	, _master_meter_panel (nullptr)
+	, _plugin_browser (nullptr)
 	, _locations (nullptr)
 	, show_gain_after_trim (false)
 	, _no_not_select_reimported_tracks (false)
@@ -698,6 +700,8 @@ Editor::Editor ()
 	add_notebook_page (_("Groups"), _("Track & Bus Groups"), _route_groups->widget ());
 	add_notebook_page (_("Marks"), _("Ranges & Marks"), _locations->widget ());
 	if (CairoTheme::studio_widgets ()) {
+		_plugin_browser = manage (new PluginBrowser);
+		add_notebook_page (_("Plugins"), _("Plugins & Instruments"), *_plugin_browser);
 		_master_meter_panel = manage (new MasterMeterPanel);
 		add_notebook_page (_("Meter"), _("Master Meter"), *_master_meter_panel);
 	}
@@ -1317,6 +1321,9 @@ Editor::set_session (Session *t)
 	_snapshots->set_session (_session);
 	if (_master_meter_panel) {
 		_master_meter_panel->set_session (_session);
+	}
+	if (_plugin_browser) {
+		_plugin_browser->set_session (_session);
 	}
 	_sections->set_session (_session);
 	_routes->set_session (_session);
@@ -5698,7 +5705,7 @@ Editor::setup_studio_editor_list ()
 {
 	struct { const char* label; const char* tip; Gtk::Widget* w; } tabs[] = {
 		{ _("Tracks"),  _("Tracks & Busses"), &_routes->widget () },
-		{ _("Regions"), _("Regions"),         &_regions->widget () },
+		{ _("Plugins"), _("Plugins & Instruments"), _plugin_browser },
 		{ _("Meter"),   _("Master Meter"),    _master_meter_panel },
 	};
 

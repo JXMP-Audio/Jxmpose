@@ -112,6 +112,7 @@ gtk2_ardour_sources = [
         'editor_selection.cc',
         'editor_snapshots.cc',
         'master_meter_panel.cc',
+        'plugin_browser.cc',
         'editor_sources.cc',
         'editor_summary.cc',
         'editor_tempodisplay.cc',
