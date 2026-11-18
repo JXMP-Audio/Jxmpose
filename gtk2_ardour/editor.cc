@@ -5784,7 +5784,7 @@ Editor::setup_studio_editor_list ()
 		b->set_name ("tab button");
 		b->set_corner_radius (2);
 		b->set_layout_font (UIConfiguration::instance ().get_SmallFont ());
-		set_tooltip (*b, t.tip);
+		set_tooltip (*b, Gtkmm2ext::markup_escape_text (t.tip));
 		Gtk::Widget* w = t.w;
 		b->signal_clicked.connect ([this, w] () {
 				_the_notebook.set_current_page (_the_notebook.page_num (*w));

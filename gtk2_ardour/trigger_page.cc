@@ -653,7 +653,10 @@ TriggerPage::remove_route (TriggerStrip* ra)
 	}
 	list<TriggerStrip*>::iterator i = find (_strips.begin (), _strips.end (), ra);
 	if (i != _strips.end ()) {
-		_strip_packer.remove (**i);
+		/* strips hidden from the cue page are not packed */
+		if ((*i)->get_parent () == &_strip_packer) {
+			_strip_packer.remove (**i);
+		}
 		_strips.erase (i);
 	}
 	redisplay_track_list ();
