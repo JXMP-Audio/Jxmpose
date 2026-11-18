@@ -16,11 +16,15 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include <set>
+
 #include "ytkmm/scrollbar.h"
 
 #include "pbd/stateful_diff_command.h"
 #include "pbd/unwind.h"
 
+#include "ardour/instrument_info.h"
+#include "ardour/midi_model.h"
 #include "ardour/midi_region.h"
 #include "ardour/midi_track.h"
 #include "ardour/quantize.h"
@@ -505,6 +509,7 @@ Pianoroll::set_visible_channel (int n)
 	}
 
 	prh->instrument_info_change ();
+	update_drum_rows ();
 }
 
 void
@@ -1967,6 +1972,69 @@ Pianoroll::set_region (std::shared_ptr<ARDOUR::Region> region)
 		 */
 		partition_height ();
 	}
+
+	update_drum_rows ();
+}
+
+void
+Pianoroll::update_drum_rows ()
+{
+	if (!bg) {
+		return;
+	}
+
+	if (bg->note_mode () != ARDOUR::Percussive) {
+		bg->set_rows (std::vector<uint8_t> ());
+		if (prh) {
+			prh->redraw ();
+		}
+		return;
+	}
+
+	/* drum map: the notes that the regions use; with "all drums" also
+	 * every named drum sound of the instrument (or the General MIDI
+	 * percussion map). An empty pattern starts with a basic kit. */
+	std::set<uint8_t> notes;
+	for (auto & [region,view] : region_view_map) {
+		std::shared_ptr<ARDOUR::MidiRegion> mr (std::dynamic_pointer_cast<ARDOUR::MidiRegion> (region));
+		std::shared_ptr<ARDOUR::MidiModel> model (mr ? mr->model () : std::shared_ptr<ARDOUR::MidiModel> ());
+		if (!model) {
+			continue;
+		}
+		ARDOUR::MidiModel::ReadLock lm (model->read_lock ());
+		for (auto const & n : model->notes ()) {
+			notes.insert (n->note ());
+		}
+	}
+
+	if (_show_all_drums) {
+		std::set<uint8_t> named;
+		if (ARDOUR::InstrumentInfo* ii = instrument_info ()) {
+			for (int n = 0; n < 128; ++n) {
+				if (!ii->get_note_name (0, 0, visible_channel (), n).empty ()) {
+					named.insert (n);
+				}
+			}
+		}
+		if (named.empty ()) {
+			for (int n = 35; n <= 81; ++n) {
+				named.insert (n);
+			}
+		}
+		notes.insert (named.begin (), named.end ());
+	} else if (notes.empty ()) {
+		/* kick, side stick, snare, clap, toms, hi-hats, crash, ride */
+		for (uint8_t n : { 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51 }) {
+			notes.insert (n);
+		}
+	}
+
+	/* kick at the top, like a drum map */
+	bg->set_rows (std::vector<uint8_t> (notes.begin (), notes.end ()));
+	if (prh) {
+		prh->instrument_info_change ();
+		prh->redraw ();
+	}
 }
 
 void
@@ -2383,6 +2451,7 @@ Pianoroll::note_mode_chosen (ARDOUR::NoteMode mode)
 
 	if (mode != bg->note_mode()) {
 		bg->set_note_mode (mode);
+		update_drum_rows ();
 		/* the header is wider in the drum view (drum names) */
 		if (prh) {
 			prh->resize ();

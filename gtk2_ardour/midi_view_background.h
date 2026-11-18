@@ -108,6 +108,13 @@ class MidiViewBackground : public virtual ViewBackground
 	uint8_t y_to_note (int y) const;
 	bool note_visible(uint8_t note) const;
 
+	/** Drum-map style display: show only these notes, one row each, in
+	 * the given order (top to bottom). An empty list restores the normal
+	 * contiguous keyboard range. */
+	void set_rows (std::vector<uint8_t> const& rows);
+	bool has_rows () const { return !_rows.empty (); }
+	std::vector<uint8_t> const& rows () const { return _rows; }
+
 	uint8_t contents_note_range() const {
 		return highest_note() - lowest_note() + 1;
 	}
@@ -158,6 +165,8 @@ class MidiViewBackground : public virtual ViewBackground
 	uint8_t                   _data_note_max; ///< in data
 	ArdourCanvas::RectSet*    _note_lines;
 	ARDOUR::NoteMode          _note_mode;
+	std::vector<uint8_t>      _rows;
+	int                       _row_of[128];
 	ARDOUR::ColorMode         _color_mode;
 	VisibleNoteRange          _visibility_note_range;
 	bool                       note_range_set;

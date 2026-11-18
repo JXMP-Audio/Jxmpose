@@ -68,4 +68,5 @@ private:
 	ArdourWidgets::ArdourButton key_button;
 	ArdourWidgets::ArdourButton drum_button;
 	ArdourWidgets::ArdourButton score_button;
+	ArdourWidgets::ArdourButton all_drums_button;
 };

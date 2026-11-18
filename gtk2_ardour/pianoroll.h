@@ -147,6 +147,9 @@ class Pianoroll : public CueEditor, public SlipDraggable
 	int visible_channel () const { return _visible_channel; }
 
 	void note_mode_clicked();
+	/** drum view: one row per drum sound (see MidiViewBackground::set_rows) */
+	void update_drum_rows ();
+	void set_show_all_drums (bool yn) { _show_all_drums = yn; update_drum_rows (); }
 	/** the editor window offers its own Key/Drum switch */
 	void hide_note_mode_button () { note_mode_button.set_no_show_all (); note_mode_button.hide (); }
 	ARDOUR::NoteMode note_mode() const;
@@ -272,6 +275,7 @@ class Pianoroll : public CueEditor, public SlipDraggable
 	AutomationLanes automation_lanes;
 
 	PianorollMidiBackground* bg;
+	bool _show_all_drums = false;
 
 	RegionMidiViewMap region_view_map;
 	void region_going_away (std::weak_ptr<ARDOUR::Region> region);

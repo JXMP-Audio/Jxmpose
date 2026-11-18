@@ -43,6 +43,7 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	, key_button (_("Key Editor"))
 	, drum_button (_("Drum Editor"))
 	, score_button (_("Score Editor"))
+	, all_drums_button (_("All Drums"))
 {
 	pianoroll->set_session (&s);
 	set_default_size (1270, 700);
@@ -65,6 +66,16 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 		m.b->signal_clicked.connect ([this, mode] () { set_editor_mode (mode); });
 		mode_bar.pack_start (*m.b, false, false);
 	}
+	/* drum view: used sounds only, or the whole drum map */
+	all_drums_button.set_name ("generic button");
+	all_drums_button.set_corner_radius (2);
+	ArdourWidgets::set_tooltip (all_drums_button, _("Show every drum sound of the instrument, not only the ones used in this pattern"));
+	all_drums_button.signal_clicked.connect ([this] () {
+		bool const yn = !all_drums_button.get_active ();
+		all_drums_button.set_active (yn);
+		pianoroll->set_show_all_drums (yn);
+	});
+	mode_bar.pack_end (all_drums_button, false, false);
 	mode_bar.set_spacing (2);
 	mode_bar.set_border_width (3);
 
@@ -84,6 +95,8 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	score_placeholder.set_no_show_all ();
 	score_placeholder.hide ();
 	hpacker.set_no_show_all ();
+	all_drums_button.set_no_show_all ();
+	all_drums_button.hide ();
 	key_button.set_active (true);
 }
 
@@ -94,6 +107,11 @@ PianorollWindow::set_editor_mode (EditorMode m)
 	key_button.set_active (m == KeyEditor);
 	drum_button.set_active (m == DrumEditor);
 	score_button.set_active (m == ScoreEditor);
+	if (m == DrumEditor) {
+		all_drums_button.show ();
+	} else {
+		all_drums_button.hide ();
+	}
 
 	if (m == ScoreEditor) {
 		hpacker.hide ();
