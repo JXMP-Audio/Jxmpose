@@ -437,6 +437,14 @@ public:
 	void set_route (std::shared_ptr<ARDOUR::Route>);
 	void set_width (Width);
 
+	/** studio Inspector: one box for inserts, one for sends (the fader is shown in both) */
+	enum DisplayFilter {
+		AllProcessors,
+		InsertsOnly,
+		SendsOnly,
+	};
+	void set_display_filter (DisplayFilter);
+
 	bool processor_operation (ProcessorOperation);
 
 	void select_all_processors ();
@@ -492,6 +500,10 @@ private:
 	ProcessorBox (ProcessorBox const &);
 
 	std::shared_ptr<ARDOUR::Route>  _route;
+
+	DisplayFilter _display_filter;
+	bool filter_processor (std::shared_ptr<ARDOUR::Processor>) const;
+	void clear_filtered (int which);
 	MixerStrip*         _parent_strip; // null if in RouteParamsUI
 	bool                _owner_is_mixer;
 	bool                 ab_direction;

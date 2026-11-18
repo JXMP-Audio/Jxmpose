@@ -201,6 +201,7 @@ private:
 	void update_decor ();
 
 	ProcessorBox processor_box;
+	ProcessorBox* _sends_box; // studio Inspector only
 	GainMeter    gpm;
 	PannerUI     panners;
 

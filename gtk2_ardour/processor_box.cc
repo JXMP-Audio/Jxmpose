@@ -1964,6 +1964,7 @@ ProcessorBox::ProcessorBox (ARDOUR::Session* sess, std::function<PluginSelector*
 	, processor_display (drop_targets())
 	, _redisplay_pending (false)
 {
+	_display_filter = AllProcessors;
 	if (!processor_box_actions) {
 		register_actions ();
 	}
@@ -3186,6 +3187,32 @@ ProcessorBox::maybe_add_processor_pin_mgr (std::weak_ptr<Processor> w)
 }
 
 void
+ProcessorBox::set_display_filter (DisplayFilter f)
+{
+	if (_display_filter == f) {
+		return;
+	}
+	_display_filter = f;
+	if (_route) {
+		redisplay_processors ();
+	}
+}
+
+bool
+ProcessorBox::filter_processor (std::shared_ptr<Processor> p) const
+{
+	if (_display_filter == AllProcessors || !p) {
+		return true;
+	}
+	bool const is_fader = _route && p == _route->amp ();
+	bool const is_send  = std::dynamic_pointer_cast<Send> (p) != 0;
+	if (_display_filter == InsertsOnly) {
+		return !is_send;
+	}
+	return is_send || is_fader;
+}
+
+void
 ProcessorBox::add_processor_to_display (std::weak_ptr<Processor> p)
 {
 	std::shared_ptr<Processor> processor (p.lock ());
@@ -3196,6 +3223,10 @@ ProcessorBox::add_processor_to_display (std::weak_ptr<Processor> p)
 #endif
 	                  )
 	   ) {
+		return;
+	}
+
+	if (!filter_processor (processor)) {
 		return;
 	}
 
@@ -3413,6 +3444,39 @@ ProcessorBox::compute_processor_sort_keys ()
 		if ((*i)->processor()) {
 			our_processors.push_back ((*i)->processor ());
 		}
+	}
+
+	if (_display_filter != AllProcessors) {
+		/* this box shows only a subset of the visible processors. Route::reorder_processors()
+		 * treats visible processors missing from the list as deleted, so merge: keep the
+		 * others where they are and fill the slots of the shown ones in the new order.
+		 */
+		Route::ProcessorList full;
+		_route->foreach_processor ([&full] (std::weak_ptr<Processor> wp) {
+				std::shared_ptr<Processor> p (wp.lock ());
+				if (p && p->display_to_user ()) {
+					full.push_back (p);
+				}
+				});
+		Route::ProcessorList merged;
+		Route::ProcessorList::const_iterator n = our_processors.begin ();
+		for (auto const& p : full) {
+			if (filter_processor (p)) {
+				if (std::find (our_processors.begin (), our_processors.end (), p) == our_processors.end ()) {
+					continue; // removed via this box
+				}
+				if (n != our_processors.end ()) {
+					merged.push_back (*n++);
+				}
+			} else {
+				merged.push_back (p);
+			}
+		}
+		/* anything new (e.g. dropped in) goes at the end of this box's slots */
+		while (n != our_processors.end ()) {
+			merged.push_back (*n++);
+		}
+		our_processors = merged;
 	}
 
 	if (_route->reorder_processors (our_processors)) {
@@ -3956,6 +4020,10 @@ ProcessorBox::toggle_custom_loudness_pos ()
 void
 ProcessorBox::clear_processors ()
 {
+	if (_display_filter != AllProcessors) {
+		clear_filtered (0);
+		return;
+	}
 	string prompt;
 	vector<string> choices;
 
@@ -3973,9 +4041,51 @@ ProcessorBox::clear_processors ()
 	}
 }
 
+/* filtered box: only remove what this box shows. which: 0 all, 1 pre-fader, 2 post-fader */
+void
+ProcessorBox::clear_filtered (int which)
+{
+	Route::ProcessorList victims;
+	bool post = false;
+	_route->foreach_processor ([&] (std::weak_ptr<Processor> wp) {
+			std::shared_ptr<Processor> p (wp.lock ());
+			if (!p) {
+				return;
+			}
+			if (p == _route->amp ()) {
+				post = true;
+				return;
+			}
+			if (!p->display_to_user () || !filter_processor (p)) {
+				return;
+			}
+			if (which == 0 || (which == 1 && !post) || (which == 2 && post)) {
+				victims.push_back (p);
+			}
+			});
+	if (victims.empty ()) {
+		return;
+	}
+
+	string what = _display_filter == SendsOnly ? _("sends") : _("inserts");
+	string prompt = string_compose (_("Do you really want to remove %1 %2 from %3?\n(this cannot be undone)"),
+	                                which == 0 ? _("all") : (which == 1 ? _("all pre-fader") : _("all post-fader")), what, _route->name ());
+	vector<string> choices;
+	choices.push_back (_("Cancel"));
+	choices.push_back (_("Yes, remove them all"));
+	ArdourWidgets::Choice prompter (_("Remove processors"), prompt, choices);
+	if (prompter.run () == 1) {
+		_route->remove_processors (victims);
+	}
+}
+
 void
 ProcessorBox::clear_processors (Placement p)
 {
+	if (_display_filter != AllProcessors) {
+		clear_filtered (p == PreFader ? 1 : 2);
+		return;
+	}
 	string prompt;
 	vector<string> choices;
 

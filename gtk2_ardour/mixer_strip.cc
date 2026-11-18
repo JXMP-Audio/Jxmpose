@@ -119,6 +119,7 @@ MixerStrip::MixerStrip (Mixer_UI& mx, Session* sess, bool in_mixer)
 	, _mixer(mx)
 	, _mixer_owned (in_mixer)
 	, processor_box (sess, std::bind (&MixerStrip::plugin_selector, this), mx.selection(), this, in_mixer)
+	, _sends_box (0)
 	, gpm (sess, 250)
 	, panners (sess)
 	, button_size_group (Gtk::SizeGroup::create (Gtk::SIZE_GROUP_HORIZONTAL))
@@ -156,6 +157,7 @@ MixerStrip::MixerStrip (Mixer_UI& mx, Session* sess, std::shared_ptr<Route> rt, 
 	, _mixer(mx)
 	, _mixer_owned (in_mixer)
 	, processor_box (sess, std::bind (&MixerStrip::plugin_selector, this), mx.selection(), this, in_mixer)
+	, _sends_box (0)
 	, gpm (sess, 250)
 	, panners (sess)
 	, button_size_group (Gtk::SizeGroup::create (Gtk::SIZE_GROUP_HORIZONTAL))
@@ -554,6 +556,9 @@ MixerStrip::set_route (std::shared_ptr<Route> rt)
 	   GUI object state.
 	*/
 	processor_box.set_route (rt);
+	if (_sends_box) {
+		_sends_box->set_route (rt);
+	}
 
 	revert_to_default_display ();
 
@@ -902,6 +907,9 @@ MixerStrip::set_width_enum (Width w, void* owner)
 	}
 
 	processor_box.set_width (w);
+	if (_sends_box) {
+		_sends_box->set_width (w);
+	}
 
 	update_input_display ();
 	update_output_display ();
@@ -1520,9 +1528,24 @@ MixerStrip::build_inspector_layout ()
 	routing->add_item (input_button_box);
 	routing->add_item (output_button);
 
-	StudioSection* inserts = manage (new StudioSection (_embedded ? _("Inserts & Sends") : _("Inserts"), pfx + X_("inserts"), true));
+	StudioSection* inserts = manage (new StudioSection (_("Inserts"), pfx + X_("inserts"), true));
 	inserts->add_item (_tmaster_widget);
 	inserts->add_item (processor_box, true);
+
+	StudioSection* sends = 0;
+	if (_embedded) {
+		/* Inspector: inserts and sends in separate sections */
+		processor_box.set_display_filter (ProcessorBox::InsertsOnly);
+		_sends_box = manage (new ProcessorBox (_session, std::bind (&MixerStrip::plugin_selector, this), _mixer.selection (), this, _mixer_owned));
+		_sends_box->set_display_filter (ProcessorBox::SendsOnly);
+		set_tooltip (*_sends_box, _("Sends. Right-click to add an aux or external send; drag them above or below the fader for pre/post."));
+		if (_route) {
+			_sends_box->set_route (_route);
+		}
+		_sends_box->show ();
+		sends = manage (new StudioSection (_("Sends"), pfx + X_("sends"), false));
+		sends->add_item (*_sends_box, true);
+	}
 
 	StudioSection* channel = manage (new StudioSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), false));
 	channel->add_item (invert_button_box);
@@ -1539,6 +1562,9 @@ MixerStrip::build_inspector_layout ()
 	global_vpacker.set_spacing (4);
 	global_vpacker.pack_start (*routing, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (*inserts, true, true);
+	if (sends) {
+		global_vpacker.pack_start (*sends, true, true);
+	}
 
 	/* fader zone stays at the bottom when racks above are collapsed */
 	if (_embedded) {
@@ -1562,6 +1588,10 @@ MixerStrip::build_inspector_layout ()
 	routing->refresh ();
 	inserts->refresh ();
 	channel->refresh ();
+	if (sends) {
+		sends->show ();
+		sends->refresh ();
+	}
 }
 
 void
