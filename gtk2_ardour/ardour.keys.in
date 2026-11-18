@@ -246,6 +246,7 @@ This mode provides many different operations on both regions and control points,
 @edit|Editor/copy-paste-section|                <@PRIMARY@><@TERTIARY@>c|copy \& paste section
 @edit|Editor/delete-section|               <@PRIMARY@><@TERTIARY@>Delete|delete section
 @edit|Editor/alternate-delete-section|  <@PRIMARY@><@TERTIARY@>BackSpace|delete section
+@edit|Editor/remove-track|                  <@TERTIARY@>Delete|remove selected tracks
 @edit|Editor/editor-consolidate|              <@SECONDARY@><@TERTIARY@>c|consolidate range
 @rop|Region/set-region-sync-position|                                  v|set region sync point
 @editing|Editing/editor-paste|                               <@PRIMARY@>v|paste
