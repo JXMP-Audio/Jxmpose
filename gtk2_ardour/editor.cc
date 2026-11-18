@@ -119,6 +119,7 @@
 #include "editor_cursors.h"
 #include "editor_drag.h"
 #include "editor_group_tabs.h"
+#include "track_folders.h"
 #include "editor_locations.h"
 #include "editor_regions.h"
 #include "editor_route_groups.h"
@@ -469,6 +470,7 @@ Editor::Editor ()
 	_track_canvas->signal_map_event().connect (sigc::mem_fun (*this, &Editor::track_canvas_map_handler));
 
 	_group_tabs = new EditorGroupTabs (*this);
+	TrackFolders::Changed.connect (sigc::mem_fun (*this, &Editor::queue_redisplay_track_views));
 	controls_layout.add (edit_controls_vbox);
 
 	if (UIConfiguration::instance().get_render_plus_hints ()) {
@@ -3032,7 +3034,7 @@ void
 Editor::setup_tooltips ()
 {
 	set_tooltip (smart_mode_button, _("Smart Mode (add range functions to Grab Mode)"));
-	set_tooltip (*_group_tabs, _("Groups: click to (de)activate\nContext-click for other operations"));
+	set_tooltip (*_group_tabs, _("Folders: click the arrow to collapse or expand\nClick to (de)activate the group\nContext-click for other operations (e.g. subfolders)"));
 	set_tooltip (nudge_forward_button, _("Nudge Region/Selection Later"));
 	set_tooltip (nudge_backward_button, _("Nudge Region/Selection Earlier"));
 	set_tooltip (zoom_preset_selector, _("Zoom to Time Scale"));

@@ -99,6 +99,7 @@ gtk2_ardour_sources = [
         'editor_section_box.cc',
         'editor_export_audio.cc',
         'editor_group_tabs.cc',
+        'track_folders.cc',
         'editor_keys.cc',
         'editor_locations.cc',
         'editor_markers.cc',

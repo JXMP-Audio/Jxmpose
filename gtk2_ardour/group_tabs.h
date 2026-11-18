@@ -79,6 +79,7 @@ protected:
 
 		double from;
 		double to;
+		int depth = 0; ///< folder nesting level (column)
 		uint32_t color; ///< color
 		std::weak_ptr<ARDOUR::RouteGroup> group; ///< route group
 	};
@@ -115,6 +116,11 @@ private:
 	 */
 	virtual double primary_coordinate (double x, double y) const = 0;
 
+	/** @return the folder nesting column at a position (editor only) */
+	virtual int column_at (double /*x*/, double /*y*/) const { return 0; }
+	/** @return true if the position is on the collapse arrow of the tab */
+	virtual bool on_fold_arrow (Tab const&, double /*x*/, double /*y*/) const { return false; }
+
 	virtual ARDOUR::RouteList routes_for_tab (Tab const * t) const = 0;
 	virtual void add_menu_items (Gtk::Menu *, std::shared_ptr<ARDOUR::RouteGroup>) {}
 	virtual ARDOUR::RouteList selected_routes () const = 0;
@@ -146,7 +152,7 @@ private:
 	bool on_enter_notify_event (GdkEventCrossing*);
 	bool on_leave_notify_event (GdkEventCrossing*);
 
-	Tab * click_to_tab (double, std::list<Tab>::iterator *, std::list<Tab>::iterator *);
+	Tab * click_to_tab (double, std::list<Tab>::iterator *, std::list<Tab>::iterator *, int column = 0);
 
 	void route_group_property_changed (std::shared_ptr<ARDOUR::RouteGroup>);
 	void route_added_to_route_group (std::shared_ptr<ARDOUR::RouteGroup>, std::weak_ptr<ARDOUR::Route>);

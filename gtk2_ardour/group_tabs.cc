@@ -40,6 +40,7 @@
 #include "rgb_macros.h"
 #include "ui_config.h"
 #include "utils.h"
+#include "track_folders.h"
 
 using namespace std;
 using namespace Gtk;
@@ -162,10 +163,25 @@ GroupTabs::on_button_press_event (GdkEventButton* ev)
 	}
 
 	double const p = primary_coordinate (ev->x, ev->y);
+	int const column = column_at (ev->x, ev->y);
 
 	list<Tab>::iterator prev;
 	list<Tab>::iterator next;
-	Tab* t = click_to_tab (p, &prev, &next);
+	Tab* t = click_to_tab (p, &prev, &next, column);
+
+	if (ev->button == 1 && t && on_fold_arrow (*t, ev->x, ev->y)) {
+		std::shared_ptr<RouteGroup> g (t->group.lock ());
+		if (g) {
+			TrackFolders::set_collapsed (g, !TrackFolders::collapsed (g));
+		}
+		return true;
+	}
+
+	if (ev->button == 1 && !t && column > 0) {
+		/* new folders are drawn in the top-level column; subfolders are
+		 * made from the folder's context menu */
+		return true;
+	}
 
 	_drag_min = prev != _tabs.end() ? prev->to : 0;
 	_drag_max = next != _tabs.end() ? next->from : extent ();
@@ -286,6 +302,10 @@ GroupTabs::on_button_release_event (GdkEventButton*)
 				 * Session::route_removed_from_route_group() will delete empty groups.
 				 */
 				for (RouteList::const_iterator i = routes.begin(); i != routes.end(); ++i) {
+					/* routes in a subfolder of this folder stay in their subfolder */
+					if (TrackFolders::is_descendant ((*i)->route_group (), group)) {
+						continue;
+					}
 					/* RouteGroup::add () ignores routes already present in the set */
 					group->add (*i);
 				}
@@ -296,7 +316,7 @@ GroupTabs::on_button_release_event (GdkEventButton*)
 
 					bool const now_in_tab = find (routes.begin(), routes.end(), i) != routes.end();
 
-					if (was_in_tab && !now_in_tab) {
+					if (was_in_tab && !now_in_tab && i->route_group () == group) {
 						group->remove (i);
 					}
 				}
@@ -366,13 +386,18 @@ GroupTabs::render (Cairo::RefPtr<Cairo::Context> const& ctx, cairo_rectangle_t*)
  */
 
 GroupTabs::Tab *
-GroupTabs::click_to_tab (double c, list<Tab>::iterator* prev, list<Tab>::iterator* next)
+GroupTabs::click_to_tab (double c, list<Tab>::iterator* prev, list<Tab>::iterator* next, int column)
 {
 	*prev = *next = _tabs.end ();
 	Tab* under = 0;
 
 	list<Tab>::iterator i = _tabs.begin ();
 	while (i != _tabs.end()) {
+
+		if (i->depth != column) {
+			++i;
+			continue;
+		}
 
 		if (i->from > c) {
 			*next = i;

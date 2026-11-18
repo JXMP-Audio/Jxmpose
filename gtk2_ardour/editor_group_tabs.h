@@ -40,5 +40,17 @@ private:
 	double visible_extent () const { 
 		return get_height();
 	}
+
+	/* nested folders: one column per nesting level */
+	int column_at (double x, double y) const;
+	bool on_fold_arrow (Tab const&, double x, double y) const;
+	void on_size_request (Gtk::Requisition*);
+	double column_width () const;
+	int n_columns () const;
+	void folders_changed ();
+	void new_subfolder (std::weak_ptr<ARDOUR::RouteGroup>);
+
+	mutable int _columns;
+	int _req_columns;
 };
 

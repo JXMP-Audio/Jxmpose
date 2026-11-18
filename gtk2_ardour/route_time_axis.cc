@@ -92,6 +92,7 @@
 #include "ui_config.h"
 #include "utils.h"
 #include "route_group_menu.h"
+#include "track_folders.h"
 
 #include "pbd/i18n.h"
 
@@ -2749,7 +2750,7 @@ RouteTimeAxisView::color () const
 bool
 RouteTimeAxisView::marked_for_display () const
 {
-	return !_route->presentation_info().hidden();
+	return !_route->presentation_info().hidden() && !TrackFolders::hidden_by_fold (_route);
 }
 
 bool
