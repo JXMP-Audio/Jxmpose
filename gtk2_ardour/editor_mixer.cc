@@ -142,7 +142,7 @@ Editor::show_editor_mixer (bool yn)
 		}
 
 		if (current_mixer_strip && current_mixer_strip->get_parent() == 0) {
-			content_att_left.add (*current_mixer_strip);
+			attach_inspector_strip ();
 			current_mixer_strip->show ();
 		}
 
@@ -155,7 +155,7 @@ Editor::show_editor_mixer (bool yn)
 
 		if (current_mixer_strip) {
 			if (current_mixer_strip->get_parent() != 0) {
-				content_att_left.remove ();
+				detach_inspector_strip ();
 			}
 		}
 	}

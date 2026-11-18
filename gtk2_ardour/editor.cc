@@ -350,6 +350,7 @@ Editor::Editor ()
 	, _snapshots (nullptr)
 	, _master_meter_panel (nullptr)
 	, _plugin_browser (nullptr)
+	, _left_zone (nullptr)
 	, _locations (nullptr)
 	, show_gain_after_trim (false)
 	, _no_not_select_reimported_tracks (false)
@@ -691,7 +692,12 @@ Editor::Editor ()
 	_midi_inspector->chord_box->InvertChord.connect ([this](bool up) { invert_selected_chord (up); });
 	_midi_inspector->chord_box->DropChord.connect ([this](std::vector<int> which_notes) { drop_selected_chord (which_notes); });
 
-	add_notebook_page (_("Tracks"), _("Tracks & Busses"), _routes->widget ());
+	if (CairoTheme::studio_widgets ()) {
+		/* studio look: the track list lives in the left zone ("Visibility") */
+		setup_studio_left_zone ();
+	} else {
+		add_notebook_page (_("Tracks"), _("Tracks & Busses"), _routes->widget ());
+	}
 	add_notebook_page (_("Sources"), _("Sources"), _sources->widget ());
 	add_notebook_page (_("Regions"), _("Regions"), _regions->widget ());
 	add_notebook_page (_("Clips"), _("Clips"), _trigger_clip_picker);
@@ -5593,7 +5599,7 @@ Editor::session_going_away ()
 
 	if (current_mixer_strip) {
 		if (current_mixer_strip->get_parent() != 0) {
-			content_att_left.remove ();
+			detach_inspector_strip ();
 		}
 		delete current_mixer_strip;
 		current_mixer_strip = 0;
@@ -5701,12 +5707,72 @@ Editor::action_menu_item (std::string const & name)
 }
 
 void
+Editor::setup_studio_left_zone ()
+{
+	_left_zone = manage (new VBox (false, 3));
+
+	HBox* row = manage (new HBox (true, 1));
+	struct { const char* label; const char* tip; Gtk::Widget* w; } tabs[] = {
+		{ _("Inspector"),  _("Settings of the selected track"),        &_inspector_holder },
+		{ _("Visibility"), _("Show or hide tracks in the project"),   &_routes->widget () },
+	};
+	for (auto const& t : tabs) {
+		ArdourButton* b = manage (new ArdourButton (t.label));
+		b->set_name ("tab button");
+		b->set_corner_radius (2);
+		b->set_layout_font (UIConfiguration::instance ().get_SmallFont ());
+		set_tooltip (*b, t.tip);
+		Gtk::Widget* w = t.w;
+		_left_notebook.append_page (*w);
+		b->signal_clicked.connect ([this, w] () {
+				_left_notebook.set_current_page (_left_notebook.page_num (*w));
+				});
+		row->pack_start (*b, true, true);
+		_left_zone_tabs.push_back (std::make_pair (b, w));
+	}
+	_left_notebook.set_show_tabs (false);
+	_left_notebook.set_show_border (false);
+	_left_notebook.signal_switch_page ().connect ([this] (GtkNotebookPage*, guint page) {
+			Gtk::Widget* cur = _left_notebook.get_nth_page (page);
+			for (auto const& t : _left_zone_tabs) {
+				t.first->set_active (t.second == cur);
+			}
+			});
+
+	_left_zone->pack_start (*row, false, false);
+	_left_zone->pack_start (_left_notebook, true, true);
+	content_att_left.add (*_left_zone);
+	_left_zone->show_all ();
+	_left_zone_tabs.front ().first->set_active (true);
+}
+
+void
+Editor::attach_inspector_strip ()
+{
+	if (_left_zone) {
+		_inspector_holder.pack_start (*current_mixer_strip, true, true);
+	} else {
+		content_att_left.add (*current_mixer_strip);
+	}
+}
+
+void
+Editor::detach_inspector_strip ()
+{
+	if (_left_zone) {
+		_inspector_holder.remove (*current_mixer_strip);
+	} else {
+		content_att_left.remove ();
+	}
+}
+
+void
 Editor::setup_studio_editor_list ()
 {
 	struct { const char* label; const char* tip; Gtk::Widget* w; } tabs[] = {
-		{ _("Tracks"),  _("Tracks & Busses"), &_routes->widget () },
 		{ _("Plugins"), _("Plugins & Instruments"), _plugin_browser },
 		{ _("Meter"),   _("Master Meter"),    _master_meter_panel },
+		{ _("Regions"), _("Regions"),         &_regions->widget () },
 	};
 
 	HBox* tabrow = manage (new HBox (false, 1));

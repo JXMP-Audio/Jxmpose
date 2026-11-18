@@ -16,9 +16,10 @@ Ardour project.
 
 - **Studio style** — flat widgets, Barlow font, JXMP colour theme
   (Preferences → Appearance; the original look is still available).
-- **Inspector** — collapsible Routing / Inserts / Sends / Channel / Notes
-  sections for the selected track.
-- **Right zone** — tabs for Tracks, a plugin & instrument browser
+- **Left zone** — *Inspector* tab with collapsible Routing / Inserts /
+  Sends / Channel / Notes sections for the selected track, and a
+  *Visibility* tab to show or hide tracks.
+- **Right zone** — tabs for a plugin & instrument browser
   (search, filter, double-click to insert, drag onto an insert slot) and a
   master meter with sample-peak level and EBU R128 loudness (momentary,
   short-term, integrated, loudness range, true peak) against a selectable

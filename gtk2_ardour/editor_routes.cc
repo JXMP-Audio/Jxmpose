@@ -16,6 +16,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#include "gtkmm2ext/cairo_theme.h"
+
 #include "editor_routes.h"
 
 #include "pbd/i18n.h"
@@ -39,4 +41,13 @@ EditorRoutes::init ()
 	append_col_solo ();
 
 	setup_col (append_toggle (_columns.rta_enabled, _columns.active, sigc::mem_fun (*this, &EditorRoutes::on_tv_rta_enable_toggled)), S_("RTA|RA"),  _("Realtime Analyzer active?"));
+
+	if (Gtkmm2ext::CairoTheme::studio_widgets ()) {
+		/* studio look: a plain visibility list (name + show checkbox); the
+		 * other toggles live in the track headers and the Inspector */
+		for (guint i = 2; i < _display.get_columns ().size (); ++i) {
+			_display.get_column (i)->set_visible (false);
+		}
+		_display.set_headers_visible (false);
+	}
 }

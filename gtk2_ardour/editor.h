@@ -1889,6 +1889,15 @@ private:
 	EditorSnapshots*   _snapshots;
 	MasterMeterPanel*  _master_meter_panel;
 	PluginBrowser*     _plugin_browser;
+
+	/* studio look: left zone with Inspector | Visibility tabs */
+	Gtk::VBox*         _left_zone;
+	Gtk::Notebook      _left_notebook;
+	Gtk::VBox          _inspector_holder;
+	std::vector<std::pair<ArdourWidgets::ArdourButton*, Gtk::Widget*> > _left_zone_tabs;
+	void setup_studio_left_zone ();
+	void attach_inspector_strip ();
+	void detach_inspector_strip ();
 	EditorLocations*   _locations;
 
 	/* diskstream/route display management */
