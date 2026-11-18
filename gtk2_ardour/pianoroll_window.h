@@ -21,6 +21,9 @@
 #include "ardour_window.h"
 
 #include <ytkmm/box.h>
+#include <ytkmm/label.h>
+
+#include "widgets/ardour_button.h"
 
 namespace ARDOUR {
 	class MidiRegion;
@@ -45,8 +48,24 @@ public:
 	bool on_delete_event (GdkEventAny*);
 	void set_show_source (bool);
 
+	enum EditorMode {
+		KeyEditor,
+		DrumEditor,
+		ScoreEditor,
+	};
+	void set_editor_mode (EditorMode);
+
 private:
+	Gtk::VBox     vpacker;
+	Gtk::HBox     mode_bar;
 	Gtk::HBox     hpacker;
+	Gtk::VBox     score_placeholder;
+	Gtk::Label    score_label;
 	Pianoroll*    pianoroll;
 	RegionEditor* region_editor;
+	EditorMode    _mode;
+
+	ArdourWidgets::ArdourButton key_button;
+	ArdourWidgets::ArdourButton drum_button;
+	ArdourWidgets::ArdourButton score_button;
 };
