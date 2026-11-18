@@ -56,6 +56,8 @@ MidiViewBackground::MidiViewBackground (ArdourCanvas::Item* parent, EditingConte
 	, note_range_set (false)
 	, kep_menu_hack (nullptr)
 {
+	_row_offset = 0;
+	_row_height = 20.;
 	for (int n = 0; n < 128; ++n) {
 		_row_of[n] = -1;
 	}
@@ -104,9 +106,8 @@ double
 MidiViewBackground::note_height () const
 {
 	if (!_rows.empty ()) {
-		double const n = (double) contents_height () / _rows.size ();
-		double const max_h = UIConfiguration::instance ().get_max_note_height () * UIConfiguration::instance ().get_ui_scale ();
-		return std::max (1., floor (std::min (n, std::max (max_h, 20. * UIConfiguration::instance ().get_ui_scale ()))));
+		/* drum map rows keep their size and scroll, like the keyboard */
+		return std::max (8., floor (_row_height * UIConfiguration::instance ().get_ui_scale ()));
 	}
 	double n = (double) contents_height() / contents_note_range();
 	double error = abs(round(n) * contents_note_range() - contents_height());
@@ -126,7 +127,11 @@ bool
 MidiViewBackground::note_visible (uint8_t note) const
 {
 	if (!_rows.empty ()) {
-		return note < 128 && _row_of[note] >= 0;
+		if (note >= 128 || _row_of[note] < 0) {
+			return false;
+		}
+		int const r = _row_of[note];
+		return r >= _row_offset && r < _row_offset + visible_rows ();
 	}
 	return lowest_note() <= note && note <= highest_note();
 }
@@ -146,6 +151,25 @@ MidiViewBackground::set_rows (std::vector<uint8_t> const& rows)
 			_row_of[_rows[r]] = r;
 		}
 	}
+	rows_changed ();
+}
+
+int
+MidiViewBackground::visible_rows () const
+{
+	return std::max (1, (int) floor (contents_height () / note_height ()));
+}
+
+void
+MidiViewBackground::clamp_row_offset ()
+{
+	_row_offset = std::max (0, std::min (_row_offset, (int) _rows.size () - visible_rows ()));
+}
+
+void
+MidiViewBackground::rows_changed ()
+{
+	clamp_row_offset ();
 	setup_note_lines ();
 	apply_note_range_to_children ();
 	NoteRangeChanged (); /* EMIT SIGNAL */
@@ -155,7 +179,7 @@ uint8_t
 MidiViewBackground::y_to_note (int y) const
 {
 	if (!_rows.empty ()) {
-		int r = floor ((double) (y + 1) / note_height ());
+		int r = _row_offset + (int) floor ((double) (y + 1) / note_height ());
 		r = std::max (0, std::min ((int) _rows.size () - 1, r));
 		return _rows[r];
 	}
@@ -180,7 +204,7 @@ MidiViewBackground::note_to_y (uint8_t note) const
 	if (!_rows.empty ()) {
 		/* notes without a row are parked below the visible area */
 		int const r = note < 128 ? _row_of[note] : -1;
-		return (r < 0 ? (int) _rows.size () + 1 : r) * note_height ();
+		return (r < 0 ? (int) _rows.size () + 1 : r - _row_offset) * note_height ();
 	}
 	return (highest_note() - note) * note_height();
 }
@@ -191,6 +215,9 @@ MidiViewBackground::update_contents_height ()
 {
 	ViewBackground::update_contents_height ();
 
+	if (!_rows.empty ()) {
+		clamp_row_offset ();
+	}
 	setup_note_lines ();
 	apply_note_range (lowest_note(), highest_note(), true);
 }
@@ -235,8 +262,8 @@ MidiViewBackground::setup_note_lines()
 
 	if (!_rows.empty ()) {
 		/* drum map: alternating rows with a thin divider */
-		for (size_t r = 0; r < _rows.size (); ++r) {
-			y = r * h;
+		for (size_t r = _row_offset; r < _rows.size (); ++r) {
+			y = (r - _row_offset) * h;
 			if (y >= contents_height ()) {
 				break;
 			}
@@ -428,6 +455,30 @@ MidiViewBackground::scroll(GdkEventScroll* ev)
 	const bool zoom_expand = Keyboard::modifier_state_equals (ev->state, Keyboard::SecondaryModifier|Keyboard::PrimaryModifier);
 	int highest = highest_note();
 	int lowest = lowest_note();
+
+	if (!_rows.empty ()) {
+		/* drum map: wheel scrolls the rows, Alt+wheel changes their height */
+		switch (ev->direction) {
+		case GDK_SCROLL_UP:
+			if (zoom || zoom_expand) {
+				_row_height = std::min (40., _row_height + 2.);
+			} else {
+				--_row_offset;
+			}
+			break;
+		case GDK_SCROLL_DOWN:
+			if (zoom || zoom_expand) {
+				_row_height = std::max (10., _row_height - 2.);
+			} else {
+				++_row_offset;
+			}
+			break;
+		default:
+			return false;
+		}
+		rows_changed ();
+		return true;
+	}
 
 	switch (ev->direction) {
 	case GDK_SCROLL_UP:

@@ -167,6 +167,12 @@ class MidiViewBackground : public virtual ViewBackground
 	ARDOUR::NoteMode          _note_mode;
 	std::vector<uint8_t>      _rows;
 	int                       _row_of[128];
+	int                       _row_offset; ///< first visible row (scrolling)
+	double                    _row_height; ///< fixed row height (unscaled px)
+
+	int  visible_rows () const;
+	void clamp_row_offset ();
+	void rows_changed ();
 	ARDOUR::ColorMode         _color_mode;
 	VisibleNoteRange          _visibility_note_range;
 	bool                       note_range_set;
