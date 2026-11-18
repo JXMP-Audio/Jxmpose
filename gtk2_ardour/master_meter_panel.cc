@@ -18,8 +18,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #include <pangomm/layout.h>
+#include <ytkmm/adjustment.h>
+#include <ytkmm/label.h>
+#include <ytkmm/spinbutton.h>
+#include <ytkmm/stock.h>
 
 #include "pbd/compose.h"
 
@@ -29,10 +34,12 @@
 #include "ardour/session.h"
 
 #include "gtkmm2ext/colors.h"
+#include "gtkmm2ext/menu_elems.h"
 #include "gtkmm2ext/utils.h"
 
 #include "widgets/tooltips.h"
 
+#include "ardour_dialog.h"
 #include "master_meter_panel.h"
 #include "timers.h"
 #include "ui_config.h"
@@ -48,7 +55,6 @@ const float level_lo = -60.f;
 const float level_hi = 6.f;
 const float lufs_lo  = -50.f;
 const float lufs_hi  = 0.f;
-const float lufs_target = -14.f;
 
 void
 set_color (Cairo::RefPtr<Cairo::Context> const& cr, char const* name, double alpha = 1.0)
@@ -59,14 +65,37 @@ set_color (Cairo::RefPtr<Cairo::Context> const& cr, char const* name, double alp
 	cr->set_source_rgba (r, g, b, alpha);
 }
 
-/* draw text; x is left edge, or right edge when right_align, or center when center */
-void
-text (Gtk::Widget& w, Cairo::RefPtr<Cairo::Context> const& cr, std::string const& s,
-      Pango::FontDescription const& font, double x, double y, int align = 0)
+Glib::RefPtr<Pango::Layout>
+layout (Gtk::Widget& w, std::string const& s, Pango::FontDescription const& font)
 {
 	Glib::RefPtr<Pango::Layout> l = Pango::Layout::create (w.get_pango_context ());
 	l->set_font_description (font);
 	l->set_text (s);
+	return l;
+}
+
+int
+text_height (Gtk::Widget& w, Pango::FontDescription const& font)
+{
+	int tw, th;
+	layout (w, "-0.9", font)->get_pixel_size (tw, th);
+	return th;
+}
+
+int
+text_width (Gtk::Widget& w, std::string const& s, Pango::FontDescription const& font)
+{
+	int tw, th;
+	layout (w, s, font)->get_pixel_size (tw, th);
+	return tw;
+}
+
+/* draw text vertically centred on y; align: -1 left edge at x, 0 centred, 1 right edge at x */
+void
+text (Gtk::Widget& w, Cairo::RefPtr<Cairo::Context> const& cr, std::string const& s,
+      Pango::FontDescription const& font, double x, double y, int align = 0)
+{
+	Glib::RefPtr<Pango::Layout> l = layout (w, s, font);
 	int tw, th;
 	l->get_pixel_size (tw, th);
 	if (align > 0) {
@@ -98,6 +127,48 @@ frac (float v, float lo, float hi)
 	return std::max (0.0, std::min (1.0, (double)(v - lo) / (hi - lo)));
 }
 
+/* draw a dB / LUFS grid with labels; labels that would overlap (or would
+ * collide with the `avoid` value's label) are skipped */
+void
+draw_scale (Gtk::Widget& w, Cairo::RefPtr<Cairo::Context> const& cr, std::vector<float> const& ticks,
+            float lo, float hi, double x_label, double x0, double x1, double top, double bottom,
+            Pango::FontDescription const& font, float avoid = 1000.f)
+{
+	double const mh = bottom - top;
+	double const th = text_height (w, font);
+	double const ya = avoid <= hi ? bottom - frac (avoid, lo, hi) * mh : -1e9;
+	double last_y   = -1e9;
+	for (float t : ticks) {
+		double y = rint (bottom - frac (t, lo, hi) * mh) + .5;
+		if (fabs (y - last_y) < th || fabs (y - ya) < th) {
+			continue;
+		}
+		set_color (cr, "neutral:foreground2", .22);
+		cr->move_to (x0, y);
+		cr->line_to (x1, y);
+		cr->set_line_width (1);
+		cr->stroke ();
+		set_color (cr, "neutral:foreground2");
+		text (w, cr, string_compose ("%1", (int)t), font, x_label, y, 1);
+		last_y = y;
+	}
+}
+
+struct TargetPreset {
+	float       lufs;
+	char const* name;
+};
+
+/* commonly published loudness targets (integrated LUFS) */
+TargetPreset const target_presets[] = {
+	{ -14.f, "Streaming (Spotify, YouTube, Tidal, Amazon)" },
+	{ -13.f, "Loud streaming master" },
+	{ -15.f, "Deezer" },
+	{ -16.f, "Apple Music, podcasts" },
+	{ -23.f, "EBU R128 broadcast" },
+	{ -24.f, "ATSC A/85 broadcast (US)" },
+};
+
 } // namespace
 
 MasterMeterPanel::MasterMeterPanel ()
@@ -117,14 +188,25 @@ MasterMeterPanel::MasterMeterPanel ()
 	_level_tab.set_name ("tab button");
 	_loudness_tab.set_name ("tab button");
 	_reset_button.set_name ("generic button");
+	_target_dd.set_name ("generic button");
 
 	_level_tab.signal_clicked.connect (sigc::bind (sigc::mem_fun (*this, &MasterMeterPanel::set_mode), 0));
 	_loudness_tab.signal_clicked.connect (sigc::bind (sigc::mem_fun (*this, &MasterMeterPanel::set_mode), 1));
 	_reset_button.signal_clicked.connect (sigc::mem_fun (*this, &MasterMeterPanel::reset));
 
+	using namespace Gtk::Menu_Helpers;
+	for (TargetPreset const& p : target_presets) {
+		std::string label = string_compose ("%1 LUFS   %2", p.lufs, p.name);
+		_target_dd.add_menu_elem (Gtkmm2ext::MenuElemNoMnemonic (label, sigc::bind (sigc::mem_fun (*this, &MasterMeterPanel::set_target), p.lufs)));
+	}
+	_target_dd.add_menu_elem (SeparatorElem ());
+	_target_dd.add_menu_elem (MenuElem (_("Custom..."), sigc::mem_fun (*this, &MasterMeterPanel::custom_target)));
+	update_target_label ();
+
 	set_tooltip (_level_tab, _("Sample peak level of the master output (dBFS)"));
 	set_tooltip (_loudness_tab, _("EBU R128 loudness of the master output (LUFS), loudness range and true peak"));
 	set_tooltip (_reset_button, _("Reset peak holds and integrated loudness (also reset when playback starts)"));
+	set_tooltip (_target_dd, _("Loudness target, drawn as the orange line"));
 
 	Gtk::HBox* tabs = Gtk::manage (new Gtk::HBox (true, 2));
 	tabs->pack_start (_level_tab);
@@ -133,11 +215,13 @@ MasterMeterPanel::MasterMeterPanel ()
 	set_spacing (4);
 	set_border_width (2);
 	pack_start (*tabs, false, false);
+	pack_start (_target_dd, false, false);
 	pack_start (_display, true, true);
 	pack_start (_reset_button, false, false);
 
-	set_mode (0);
 	show_all ();
+	_target_dd.set_no_show_all ();
+	set_mode (0);
 }
 
 MasterMeterPanel::~MasterMeterPanel ()
@@ -178,7 +262,51 @@ MasterMeterPanel::set_mode (int m)
 	_mode = m;
 	_level_tab.set_active (m == 0);
 	_loudness_tab.set_active (m == 1);
+	if (m == 1) {
+		_target_dd.show ();
+	} else {
+		_target_dd.hide ();
+	}
 	_display.queue_draw ();
+}
+
+void
+MasterMeterPanel::set_target (float t)
+{
+	UIConfiguration::instance ().set_master_meter_loudness_target (t);
+	update_target_label ();
+	_display.queue_draw ();
+}
+
+void
+MasterMeterPanel::update_target_label ()
+{
+	char buf[64];
+	snprintf (buf, sizeof (buf), "%s %.1f LUFS", _("Target"), UIConfiguration::instance ().get_master_meter_loudness_target ());
+	_target_dd.set_text (buf);
+}
+
+void
+MasterMeterPanel::custom_target ()
+{
+	ArdourDialog d (_("Loudness Target"), true);
+	Gtk::Adjustment adj (UIConfiguration::instance ().get_master_meter_loudness_target (), -40, 0, 0.5, 1);
+	Gtk::SpinButton sb (adj, 0.5, 1);
+	Gtk::Label      l (_("Integrated loudness target (LUFS):"));
+	Gtk::HBox       hb;
+	hb.set_spacing (6);
+	hb.pack_start (l, false, false);
+	hb.pack_start (sb, false, false);
+	d.get_vbox ()->pack_start (hb, false, false, 6);
+	d.add_button (Gtk::Stock::CANCEL, Gtk::RESPONSE_CANCEL);
+	d.add_button (Gtk::Stock::OK, Gtk::RESPONSE_OK);
+	d.set_default_response (Gtk::RESPONSE_OK);
+	sb.set_activates_default ();
+	d.show_all ();
+	if (d.run () == Gtk::RESPONSE_OK) {
+		sb.update ();
+		set_target (sb.get_value ());
+	}
 }
 
 void
@@ -235,8 +363,8 @@ void
 MasterMeterPanel::Display::on_size_request (Gtk::Requisition* req)
 {
 	float s = UIConfiguration::instance ().get_ui_scale ();
-	req->width  = 90 * s;
-	req->height = 260 * s;
+	req->width  = 120 * s;
+	req->height = 320 * s;
 }
 
 void
@@ -264,21 +392,24 @@ MasterMeterPanel::Display::render_level (Cairo::RefPtr<Cairo::Context> const& cr
 {
 	UIConfiguration& uic (UIConfiguration::instance ());
 	float const s = uic.get_ui_scale ();
-	Pango::FontDescription small = uic.get_SmallFont ();
-	Pango::FontDescription tiny  = uic.get_SmallerFont ();
+	Pango::FontDescription label_font = uic.get_NormalFont ();
+	Pango::FontDescription value_font = uic.get_NormalBoldFont ();
 
 	size_t const n = std::max<size_t> (1, _p._peak.size ());
 
-	double const pad    = 6 * s;
-	double const scale_w = 24 * s;
-	double const top    = 26 * s;  // room for max-peak readouts
-	double const bottom = h - 18 * s;
-	double const x0     = pad + scale_w;
-	double const bw     = std::max (4.0, (w - x0 - pad - (n - 1) * 2 * s) / n);
-	double const mh     = bottom - top;
+	double const pad     = 8 * s;
+	double const vh      = text_height (*this, value_font);
+	double const lh      = text_height (*this, label_font);
+	double const scale_w = text_width (*this, "-60", label_font) + 8 * s;
+	double const top     = pad + vh + 6 * s;  // room for max-peak readouts
+	double const bottom  = h - pad - lh - 4 * s;
+	double const x0      = pad + scale_w;
+	double const gap     = 3 * s;
+	double const bw      = std::max (4.0, (w - x0 - pad - (n - 1) * gap) / n);
+	double const mh      = bottom - top;
 
 	for (size_t i = 0; i < n; ++i) {
-		double const x = rint (x0 + i * (bw + 2 * s));
+		double const x  = rint (x0 + i * (bw + gap));
 		float  const pk = i < _p._peak.size () ? _p._peak[i] : -200;
 		float  const mx = i < _p._max_peak.size () ? _p._max_peak[i] : -200;
 
@@ -286,7 +417,7 @@ MasterMeterPanel::Display::render_level (Cairo::RefPtr<Cairo::Context> const& cr
 		cr->rectangle (x, top, bw, mh);
 		cr->fill ();
 
-		/* segmented colour by level zone */
+		/* colour by level zone */
 		struct Zone { float lo, hi; char const* col; };
 		static const Zone zones[] = {
 			{ level_lo, -18.f, "meter color1" },
@@ -311,89 +442,100 @@ MasterMeterPanel::Display::render_level (Cairo::RefPtr<Cairo::Context> const& cr
 			set_color (cr, mx > 0 ? "alert:red" : "neutral:foreground");
 			cr->move_to (x, y);
 			cr->line_to (x + bw, y);
+			cr->set_line_width (1);
 			cr->stroke ();
 		}
 
 		/* max peak readout */
-		set_color (cr, mx > 0 ? "alert:red" : "neutral:foreground");
-		text (*this, cr, fmt1 (mx), tiny, x + bw / 2, top / 2, 0);
+		set_color (cr, mx > 0 ? "alert:red" : "neutral:foregroundest");
+		text (*this, cr, fmt1 (mx), value_font, x + bw / 2, pad + vh / 2, 0);
 
 		/* channel label */
 		set_color (cr, "neutral:foreground2");
 		std::string lbl = n == 2 ? (i == 0 ? "L" : "R") : string_compose ("%1", i + 1);
-		text (*this, cr, lbl, small, x + bw / 2, (bottom + h) / 2, 0);
+		text (*this, cr, lbl, label_font, x + bw / 2, bottom + 4 * s + lh / 2, 0);
 	}
 
-	/* dB scale */
-	static const float ticks[] = { 6, 0, -6, -12, -18, -24, -30, -40, -50, -60 };
-	for (float t : ticks) {
-		double y = rint (bottom - frac (t, level_lo, level_hi) * mh) + .5;
-		set_color (cr, "neutral:foreground2", .25);
-		cr->move_to (x0 - 3 * s, y);
-		cr->line_to (w - pad, y);
-		cr->set_line_width (1);
-		cr->stroke ();
-		set_color (cr, "neutral:foreground2");
-		text (*this, cr, string_compose ("%1", (int)t), tiny, x0 - 5 * s, y, 1);
-	}
+	static const std::vector<float> ticks = { 6, 0, -3, -6, -12, -18, -24, -30, -40, -50, -60 };
+	draw_scale (*this, cr, ticks, level_lo, level_hi, x0 - 5 * s, x0, w - pad, top, bottom, label_font);
 
 	set_color (cr, "neutral:foreground2");
-	text (*this, cr, "dB", tiny, pad, (bottom + h) / 2, -1);
+	text (*this, cr, "dBFS", label_font, pad, bottom + 4 * s + lh / 2, -1);
 }
 
 void
 MasterMeterPanel::Display::render_loudness (Cairo::RefPtr<Cairo::Context> const& cr, double w, double h)
 {
 	UIConfiguration& uic (UIConfiguration::instance ());
-	float const s = uic.get_ui_scale ();
-	Pango::FontDescription small = uic.get_SmallFont ();
-	Pango::FontDescription tiny  = uic.get_SmallerFont ();
-	Pango::FontDescription big   = uic.get_LargeBoldFont ();
+	float const s      = uic.get_ui_scale ();
+	float const target = uic.get_master_meter_loudness_target ();
 
-	double const pad = 6 * s;
-	double const row = 16 * s;
+	Pango::FontDescription label_font = uic.get_NormalFont ();
+	Pango::FontDescription value_font = uic.get_NormalBoldFont ();
+	Pango::FontDescription big_font   = uic.get_LargerBoldFont ();
 
-	/* big integrated readout */
-	double y = pad + 12 * s;
+	double const pad = 8 * s;
+	double const lh  = text_height (*this, label_font);
+	double const vh  = text_height (*this, value_font);
+	double const bh  = text_height (*this, big_font);
+
+	/* big integrated readout: title / value / difference to target */
+	double y = pad + lh / 2;
 	set_color (cr, "neutral:foreground2");
-	text (*this, cr, _("Integrated"), tiny, w / 2, y, 0);
-	y += 16 * s;
+	text (*this, cr, _("Integrated LUFS"), label_font, w / 2, y, 0);
+	y += lh / 2 + 2 * s + bh / 2;
+	bool const have_i = _p._integrated > -70;
 	set_color (cr, "neutral:foregroundest");
-	text (*this, cr, fmt1 (_p._integrated), big, w / 2, y, 0);
-	y += 13 * s;
-	set_color (cr, "neutral:foreground2");
-	text (*this, cr, "LUFS", tiny, w / 2, y, 0);
+	text (*this, cr, fmt1 (_p._integrated), big_font, w / 2, y, 0);
+	y += bh / 2 + 2 * s + lh / 2;
+	if (have_i) {
+		float d = _p._integrated - target;
+		char buf[32];
+		snprintf (buf, sizeof (buf), "%+.1f LU", d);
+		set_color (cr, fabs (d) <= 1.f ? "alert:green" : "widget:orange");
+		text (*this, cr, buf, label_font, w / 2, y, 0);
+	}
+	y += lh / 2;
 
 	/* value table at the bottom */
-	struct Item { char const* label; std::string value; bool warn; };
+	struct Item { std::string label; std::string value; bool warn; };
 	std::vector<Item> items = {
 		{ _("Momentary"), fmt1 (_p._momentary), false },
-		{ _("Short-Term"), fmt1 (_p._short_term), false },
-		{ _("Max M"), fmt1 (_p._max_momentary), false },
-		{ _("Max S"), fmt1 (_p._max_short_term), false },
-		{ _("Range LU"), _p._integrated > -70 ? fmt1 (_p._range, -1000) : "-", false },
-		{ _("True Peak"), fmt1 (_p._true_peak), _p._true_peak > -1.f },
+		{ _("Short-term"), fmt1 (_p._short_term), false },
+		{ _("Max momentary"), fmt1 (_p._max_momentary), false },
+		{ _("Max short-term"), fmt1 (_p._max_short_term), false },
+		{ _("Range (LU)"), have_i ? fmt1 (_p._range, -1000) : "-", false },
+		{ _("True peak (dBTP)"), fmt1 (_p._true_peak), _p._true_peak > -1.f },
 	};
-	double const table_h = items.size () * row + pad;
-	double ty = h - table_h + row / 2;
+	double const row     = std::max (lh, vh) + 5 * s;
+	double const table_h = items.size () * row;
+	double ty = h - pad - table_h + row / 2;
+
+	set_color (cr, "neutral:foreground2", .22);
+	cr->move_to (pad, rint (h - pad - table_h - 3 * s) + .5);
+	cr->line_to (w - pad, rint (h - pad - table_h - 3 * s) + .5);
+	cr->set_line_width (1);
+	cr->stroke ();
+
 	for (Item const& it : items) {
 		set_color (cr, "neutral:foreground2");
-		text (*this, cr, it.label, tiny, pad, ty, -1);
-		set_color (cr, it.warn ? "alert:red" : "neutral:foreground");
-		text (*this, cr, it.value, small, w - pad, ty, 1);
+		text (*this, cr, it.label, label_font, pad, ty, -1);
+		set_color (cr, it.warn ? "alert:red" : "neutral:foregroundest");
+		text (*this, cr, it.value, value_font, w - pad, ty, 1);
 		ty += row;
 	}
 
 	/* M / S / I bars */
-	double const top    = y + 14 * s;
-	double const bottom = h - table_h - 16 * s;
-	double const mh     = bottom - top;
-	if (mh < 20 * s) {
+	double const top     = y + 8 * s;
+	double const bottom  = h - pad - table_h - 10 * s - lh;
+	double const mh      = bottom - top;
+	if (mh < 40 * s) {
 		return;
 	}
-	double const scale_w = 24 * s;
+	double const scale_w = text_width (*this, "-50", label_font) + 8 * s;
 	double const x0      = pad + scale_w;
-	double const bw      = std::max (4.0, (w - x0 - pad - 4 * s) / 3);
+	double const gap     = 3 * s;
+	double const bw      = std::max (4.0, (w - x0 - pad - 2 * gap) / 3);
 
 	struct Bar { char const* label; float v; char const* col; };
 	Bar const bars[] = {
@@ -402,7 +544,7 @@ MasterMeterPanel::Display::render_loudness (Cairo::RefPtr<Cairo::Context> const&
 		{ "I", _p._integrated, "alert:greenish" },
 	};
 	for (int i = 0; i < 3; ++i) {
-		double const x = rint (x0 + i * (bw + 2 * s));
+		double const x = rint (x0 + i * (bw + gap));
 		set_color (cr, "theme:bg2");
 		cr->rectangle (x, top, bw, mh);
 		cr->fill ();
@@ -413,20 +555,18 @@ MasterMeterPanel::Display::render_loudness (Cairo::RefPtr<Cairo::Context> const&
 			cr->fill ();
 		}
 		set_color (cr, "neutral:foreground2");
-		text (*this, cr, bars[i].label, small, x + bw / 2, bottom + 8 * s, 0);
+		text (*this, cr, bars[i].label, label_font, x + bw / 2, bottom + 4 * s + lh / 2, 0);
 	}
 
-	static const float ticks[] = { 0, -10, -14, -20, -23, -30, -40, -50 };
-	for (float t : ticks) {
-		double ty2 = rint (bottom - frac (t, lufs_lo, lufs_hi) * mh) + .5;
-		bool tgt = (t == lufs_target);
-		set_color (cr, tgt ? "widget:orange" : "neutral:foreground2", tgt ? 1.0 : .25);
-		cr->move_to (x0 - 3 * s, ty2);
-		cr->line_to (w - pad, ty2);
-		cr->set_line_width (1);
-		cr->stroke ();
-		set_color (cr, tgt ? "widget:orange" : "neutral:foreground2");
-		text (*this, cr, string_compose ("%1", (int)t), tiny, x0 - 5 * s, ty2, 1);
-	}
+	static const std::vector<float> ticks = { 0, -6, -10, -20, -30, -40, -50 };
+	draw_scale (*this, cr, ticks, lufs_lo, lufs_hi, x0 - 5 * s, x0, w - pad, top, bottom, label_font, target);
 
+	/* target line on top */
+	double const yt = rint (bottom - frac (target, lufs_lo, lufs_hi) * mh) + .5;
+	set_color (cr, "widget:orange");
+	cr->set_line_width (2 * s);
+	cr->move_to (x0 - 3 * s, yt);
+	cr->line_to (w - pad, yt);
+	cr->stroke ();
+	text (*this, cr, fmt1 (target), label_font, x0 - 5 * s, yt, 1);
 }

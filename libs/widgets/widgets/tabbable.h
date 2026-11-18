@@ -203,6 +203,11 @@ protected:
 	ArdourWidgets::ArdourButton right_attachment_button;
 	ArdourWidgets::ArdourButton bottom_attachment_button;
 
+	/* studio look: thin arrow strip at the right edge to fold the sidebar in/out */
+	ArdourWidgets::ArdourButton right_pane_arrow;
+	void right_pane_arrow_clicked ();
+	void update_right_pane_arrow ();
+
 private:
 	void default_layout ();
 	void show_tab ();

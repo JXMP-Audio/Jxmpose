@@ -27,6 +27,7 @@
 
 #include "gtkmm2ext/cairo_widget.h"
 #include "widgets/ardour_button.h"
+#include "widgets/ardour_dropdown.h"
 
 namespace ARDOUR {
 	class Route;
@@ -62,6 +63,9 @@ private:
 	void session_going_away ();
 
 	void set_mode (int);
+	void set_target (float);
+	void custom_target ();
+	void update_target_label ();
 	void reset ();
 	void update ();
 
@@ -72,6 +76,7 @@ private:
 	ArdourWidgets::ArdourButton _level_tab;
 	ArdourWidgets::ArdourButton _loudness_tab;
 	ArdourWidgets::ArdourButton _reset_button;
+	ArdourWidgets::ArdourDropdown _target_dd;
 	Display                     _display;
 
 	/* cached values, refreshed by the timer */

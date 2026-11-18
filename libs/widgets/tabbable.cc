@@ -33,9 +33,11 @@
 #include "gtkmm2ext/cairo_theme.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/utils.h"
+#include "gtkmm2ext/ui_config.h"
 #include "gtkmm2ext/visibility_tracker.h"
 
 #include "widgets/tabbable.h"
+#include "widgets/tooltips.h"
 
 #include "pbd/i18n.h"
 
@@ -199,6 +201,16 @@ Tabbable::default_layout ()
 		content_right_pane.add (content_right_vbox);
 		content_right_vbox.pack_start (content_att_right, true, true);
 		content_att_right.show ();
+		if (CairoTheme::studio_widgets ()) {
+			right_pane_arrow.set_name ("tab button");
+			right_pane_arrow.set_tweaks (ArdourButton::Tweaks (ArdourButton::ForceFlat));
+			right_pane_arrow.set_size_request (std::max (10, (int) rint (12 * UIConfigurationBase::instance ().get_ui_scale ())), -1);
+			right_pane_arrow.signal_clicked.connect (sigc::mem_fun (*this, &Tabbable::right_pane_arrow_clicked));
+			set_tooltip (right_pane_arrow, _("Show or hide the right zone"));
+			content_inner_hbox.pack_end (right_pane_arrow, false, false);
+			right_pane_arrow.show ();
+			update_right_pane_arrow ();
+		}
 	} else {
 		content_midlevel_vbox.pack_start (content_inner_hbox, true, true);
 	}
@@ -609,7 +621,25 @@ Tabbable::showhide_att_right (bool yn)
 		content_right_vbox.hide ();
 	}
 
+	update_right_pane_arrow ();
 	StateChange (*this);
+}
+
+void
+Tabbable::update_right_pane_arrow ()
+{
+	right_pane_arrow.set_icon (content_right_vbox.get_visible () ? ArdourIcon::ArrowRight : ArdourIcon::ArrowLeft);
+}
+
+void
+Tabbable::right_pane_arrow_clicked ()
+{
+	Glib::RefPtr<Gtk::ToggleAction> tact = Glib::RefPtr<Gtk::ToggleAction>::cast_dynamic (right_attachment_button.get_related_action ());
+	if (tact) {
+		tact->set_active (!tact->get_active ());
+	} else {
+		showhide_att_right (!content_right_vbox.get_visible ());
+	}
 }
 
 void
