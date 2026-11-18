@@ -1019,7 +1019,11 @@ MixerStrip::setup_comment_button ()
 
 	if (comment.empty ()) {
 		_comment_button.set_name ("generic button");
-		_comment_button.set_text (_width  == Wide ? _("Comments") : _("Cmt"));
+		if (_inspector_layout && _embedded) {
+			_comment_button.set_text (_("Add note..."));
+		} else {
+			_comment_button.set_text (_width  == Wide ? _("Comments") : _("Cmt"));
+		}
 		return;
 	}
 
@@ -1543,6 +1547,8 @@ MixerStrip::build_inspector_layout ()
 			_sends_box->set_route (_route);
 		}
 		_sends_box->show ();
+		/* sends are few: a compact list, the inserts get the rest */
+		_sends_box->set_size_request (-1, rintf (80.f * UIConfiguration::instance ().get_ui_scale ()));
 		sends = manage (new StudioSection (_("Sends"), pfx + X_("sends"), false));
 		sends->add_item (*_sends_box, true);
 	}
@@ -1563,7 +1569,7 @@ MixerStrip::build_inspector_layout ()
 	global_vpacker.pack_start (*routing, Gtk::PACK_SHRINK);
 	global_vpacker.pack_start (*inserts, true, true);
 	if (sends) {
-		global_vpacker.pack_start (*sends, true, true);
+		global_vpacker.pack_start (*sends, false, false);
 	}
 
 	/* fader zone stays at the bottom when racks above are collapsed */

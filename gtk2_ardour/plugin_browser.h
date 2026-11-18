@@ -31,6 +31,7 @@
 
 #include "gtkmm2ext/dndtreeview.h"
 #include "widgets/ardour_dropdown.h"
+#include "widgets/searchbar.h"
 
 /** Plugin & instrument browser for the editor's right zone.
  *
@@ -71,7 +72,8 @@ private:
 
 	Filter                         _filter;
 	ArdourWidgets::ArdourDropdown  _filter_dd;
-	Gtk::Entry                     _search;
+	ArdourWidgets::SearchBar       _search;
+	std::string                    _needle;
 	Columns                        _columns;
 	Glib::RefPtr<Gtk::ListStore>   _model;
 	Gtkmm2ext::DnDTreeView<ARDOUR::PluginPresetPtr> _display;

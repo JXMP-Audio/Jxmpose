@@ -67,6 +67,7 @@ lower (std::string s)
 
 PluginBrowser::PluginBrowser ()
 	: _filter (All)
+	, _search (_("Search plugins..."))
 {
 	using namespace Gtk::Menu_Helpers;
 	_filter_dd.add_menu_elem (MenuElem (_("All Plugins"), sigc::bind (sigc::mem_fun (*this, &PluginBrowser::set_filter), All)));
@@ -79,7 +80,7 @@ PluginBrowser::PluginBrowser ()
 	set_tooltip (_filter_dd, _("Which plugins to list"));
 
 	_search.set_width_chars (8);
-	_search.signal_changed ().connect (sigc::mem_fun (*this, &PluginBrowser::refill));
+	_search.signal_search_string_updated ().connect ([this] (std::string const& str) { _needle = str; refill (); });
 	set_tooltip (_search, _("Search by name, vendor or category"));
 
 	_model = Gtk::ListStore::create (_columns);
@@ -159,7 +160,7 @@ PluginBrowser::refill ()
 			return lower (a->name) < lower (b->name);
 			});
 
-	std::string const needle = lower (_search.get_text ());
+	std::string const needle = lower (_needle);
 
 	_model->clear ();
 	for (auto const& p : plugs) {
