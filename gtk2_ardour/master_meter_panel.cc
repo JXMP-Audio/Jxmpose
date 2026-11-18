@@ -403,9 +403,12 @@ MasterMeterPanel::Display::render_level (Cairo::RefPtr<Cairo::Context> const& cr
 	double const scale_w = text_width (*this, "-60", label_font) + 8 * s;
 	double const top     = pad + vh + 6 * s;  // room for max-peak readouts
 	double const bottom  = h - pad - lh - 4 * s;
-	double const x0      = pad + scale_w;
-	double const gap     = 3 * s;
-	double const bw      = std::max (4.0, (w - x0 - pad - (n - 1) * gap) / n);
+	/* slim bars, centred; the gap leaves room for the max-peak readouts */
+	double const bw      = rint (14 * s);
+	double const gap     = std::max (3.0 * s, text_width (*this, "-88.8", value_font) - bw + 6 * s);
+	double const gw      = n * bw + (n - 1) * gap;
+	double const x0      = rint (std::max (pad + scale_w, (w - gw - scale_w) / 2 + scale_w));
+	double const x1      = x0 + gw;
 	double const mh      = bottom - top;
 
 	for (size_t i = 0; i < n; ++i) {
@@ -457,10 +460,10 @@ MasterMeterPanel::Display::render_level (Cairo::RefPtr<Cairo::Context> const& cr
 	}
 
 	static const std::vector<float> ticks = { 6, 0, -3, -6, -12, -18, -24, -30, -40, -50, -60 };
-	draw_scale (*this, cr, ticks, level_lo, level_hi, x0 - 5 * s, x0, w - pad, top, bottom, label_font);
+	draw_scale (*this, cr, ticks, level_lo, level_hi, x0 - 5 * s, x0, x1, top, bottom, label_font);
 
 	set_color (cr, "neutral:foreground2");
-	text (*this, cr, "dBFS", label_font, pad, bottom + 4 * s + lh / 2, -1);
+	text (*this, cr, "dBFS", label_font, x0 - 5 * s, bottom + 4 * s + lh / 2, 1);
 }
 
 void
@@ -533,9 +536,11 @@ MasterMeterPanel::Display::render_loudness (Cairo::RefPtr<Cairo::Context> const&
 		return;
 	}
 	double const scale_w = text_width (*this, "-50", label_font) + 8 * s;
-	double const x0      = pad + scale_w;
-	double const gap     = 3 * s;
-	double const bw      = std::max (4.0, (w - x0 - pad - 2 * gap) / 3);
+	double const bw      = rint (16 * s);
+	double const gap     = rint (6 * s);
+	double const gw      = 3 * bw + 2 * gap;
+	double const x0      = rint (std::max (pad + scale_w, (w - gw - scale_w) / 2 + scale_w));
+	double const x1      = x0 + gw;
 
 	struct Bar { char const* label; float v; char const* col; };
 	Bar const bars[] = {
@@ -559,14 +564,14 @@ MasterMeterPanel::Display::render_loudness (Cairo::RefPtr<Cairo::Context> const&
 	}
 
 	static const std::vector<float> ticks = { 0, -6, -10, -20, -30, -40, -50 };
-	draw_scale (*this, cr, ticks, lufs_lo, lufs_hi, x0 - 5 * s, x0, w - pad, top, bottom, label_font, target);
+	draw_scale (*this, cr, ticks, lufs_lo, lufs_hi, x0 - 5 * s, x0, x1, top, bottom, label_font, target);
 
 	/* target line on top */
 	double const yt = rint (bottom - frac (target, lufs_lo, lufs_hi) * mh) + .5;
 	set_color (cr, "widget:orange");
 	cr->set_line_width (2 * s);
 	cr->move_to (x0 - 3 * s, yt);
-	cr->line_to (w - pad, yt);
+	cr->line_to (x1 + 3 * s, yt);
 	cr->stroke ();
 	text (*this, cr, fmt1 (target), label_font, x0 - 5 * s, yt, 1);
 }
