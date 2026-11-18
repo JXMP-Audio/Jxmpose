@@ -49,6 +49,7 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 
 	hpacker.pack_start (pianoroll->contents(), true, true);
 	pianoroll->contents().show ();
+	pianoroll->hide_note_mode_button ();
 
 	/* editor switch: three views of the same MIDI data */
 	struct { ArdourWidgets::ArdourButton* b; EditorMode m; const char* tip; } modes[] = {
@@ -134,6 +135,11 @@ PianorollWindow::set_region (std::shared_ptr<MidiTrack> track, std::shared_ptr<M
 {
 	pianoroll->add_region (region, track);
 	pianoroll->set_region (region);
+
+	/* follow the track's note mode (drum tracks open in the drum editor) */
+	if (_mode != ScoreEditor) {
+		set_editor_mode (pianoroll->note_mode () == ARDOUR::Percussive ? DrumEditor : KeyEditor);
+	}
 
 	set_title (string_compose (_("%1 Pianoroll: %2"), PROGRAM_NAME, region->name()));
 }

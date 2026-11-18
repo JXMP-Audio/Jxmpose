@@ -2383,6 +2383,11 @@ Pianoroll::note_mode_chosen (ARDOUR::NoteMode mode)
 
 	if (mode != bg->note_mode()) {
 		bg->set_note_mode (mode);
+		/* the header is wider in the drum view (drum names) */
+		if (prh) {
+			prh->resize ();
+			partition_height ();
+		}
 		if (bg->note_mode() == Percussive) {
 			note_mode_button.set_active_state (Gtkmm2ext::ExplicitActive);
 		} else {

@@ -147,6 +147,8 @@ class Pianoroll : public CueEditor, public SlipDraggable
 	int visible_channel () const { return _visible_channel; }
 
 	void note_mode_clicked();
+	/** the editor window offers its own Key/Drum switch */
+	void hide_note_mode_button () { note_mode_button.set_no_show_all (); note_mode_button.hide (); }
 	ARDOUR::NoteMode note_mode() const;
 	void note_mode_chosen (ARDOUR::NoteMode);
 

@@ -45,6 +45,37 @@
 
 #include "pbd/i18n.h"
 
+namespace {
+
+/* General MIDI percussion key map (notes 35..81), used by the drum view when
+ * the instrument provides no note names */
+const char* gm_drum_names[] = {
+	"Acoustic Bass Drum", "Bass Drum", "Side Stick", "Acoustic Snare", "Hand Clap",
+	"Electric Snare", "Low Floor Tom", "Closed Hi-Hat", "High Floor Tom", "Pedal Hi-Hat",
+	"Low Tom", "Open Hi-Hat", "Low-Mid Tom", "Hi-Mid Tom", "Crash Cymbal 1",
+	"High Tom", "Ride Cymbal 1", "Chinese Cymbal", "Ride Bell", "Tambourine",
+	"Splash Cymbal", "Cowbell", "Crash Cymbal 2", "Vibraslap", "Ride Cymbal 2",
+	"Hi Bongo", "Low Bongo", "Mute Hi Conga", "Open Hi Conga", "Low Conga",
+	"High Timbale", "Low Timbale", "High Agogo", "Low Agogo", "Cabasa",
+	"Maracas", "Short Whistle", "Long Whistle", "Short Guiro", "Long Guiro",
+	"Claves", "Hi Wood Block", "Low Wood Block", "Mute Cuica", "Open Cuica",
+	"Mute Triangle", "Open Triangle",
+};
+
+std::string
+drum_name (int note, std::string const& midnam, bool from_midnam)
+{
+	if (from_midnam) {
+		return midnam;
+	}
+	if (note >= 35 && note <= 81) {
+		return gm_drum_names[note - 35];
+	}
+	return midnam;
+}
+
+} // namespace
+
 using namespace std;
 using namespace Gtkmm2ext;
 
@@ -205,7 +236,44 @@ PianoRollHeaderBase::render (ArdourCanvas::Rect const & self, ArdourCanvas::Rect
 	cr->rectangle (0,0,_scroomer_size, height ());
 	cr->clip();
 
-	if (show_scroomer()) {
+	/* the drum view lists drum sounds instead of piano keys; the key view
+	 * shows only the keyboard */
+	bool const drums = _midi_context.note_mode () == ARDOUR::Percussive;
+
+	if (drums) {
+
+		for (std::vector<int>::size_type n = 0; n < numbers.size(); ++n) {
+			double const y = positions[n];
+			double const h = heights[n];
+			if (h == 1.) continue;
+
+			int const note = numbers[n];
+			NoteName const & nn (note_names[note]);
+
+			/* row background, highlighted under the mouse */
+			if (note == _highlighted_note) {
+				set_source_rgba (cr, white_highlight);
+				cr->rectangle (0, y, _scroomer_size + kbd_width * ui_scale, h);
+				cr->fill ();
+			}
+			/* row separator */
+			set_source_rgba (cr, black);
+			cr->move_to (0, y + h - .5);
+			cr->line_to (_scroomer_size + kbd_width * ui_scale, y + h - .5);
+			cr->stroke ();
+
+			if (_mini_map_display) {
+				continue;
+			}
+			int size_x, size_y;
+			_layout->set_text (drum_name (note, nn.name, nn.from_midnam));
+			pango_layout_get_pixel_size (_layout->gobj (), &size_x, &size_y);
+			set_source_rgba (cr, textc);
+			cr->move_to (4.f, y + h / 2 - size_y / 2);
+			_layout->show_in_cairo_context (cr);
+		}
+
+	} else if (show_scroomer()) {
 
 		/* Draw the actual text */
 
@@ -260,7 +328,9 @@ PianoRollHeaderBase::render (ArdourCanvas::Rect const & self, ArdourCanvas::Rect
 
 	/* Now draw the semi-transparent scroomer over the top */
 
-	render_scroomer (cr);
+	if (!drums) {
+		render_scroomer (cr);
+	}
 
 	/* Done with clip region */
 
@@ -274,7 +344,7 @@ PianoRollHeaderBase::render (ArdourCanvas::Rect const & self, ArdourCanvas::Rect
 	   layout, but without a setback/offset for the black keys
 	*/
 
-	for (std::vector<int>::size_type n = 0; n < numbers.size(); ++n) {
+	for (std::vector<int>::size_type n = 0; n < numbers.size() && !drums; ++n) {
 
 		int i = numbers[n];
 		int oct_rel = i % 12;
@@ -345,7 +415,7 @@ PianoRollHeaderBase::render (ArdourCanvas::Rect const & self, ArdourCanvas::Rect
 
 	int c_height, c_width;
 
-	for (std::vector<int>::size_type n = 0; n < numbers.size(); ++n) {
+	for (std::vector<int>::size_type n = 0; n < numbers.size() && !drums; ++n) {
 
 		double h = heights[n];
 		double x = _scroomer_size;
@@ -783,6 +853,10 @@ PianoRollHeaderBase::invalidate_note_range (int lowest, int highest)
 bool
 PianoRollHeaderBase::show_scroomer () const
 {
+	/* the drum view always lists drum names; the key view shows only the
+	 * keyboard (no instrument note names) */
+	return _midi_context.note_mode () == ARDOUR::Percussive;
+
 	Editing::NoteNameDisplay nnd = UIConfiguration::instance().get_note_name_display();
 
 	if (nnd == Editing::Never) {
