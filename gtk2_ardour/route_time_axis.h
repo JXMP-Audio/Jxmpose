@@ -236,6 +236,7 @@ protected:
 	void speed_changed ();
 	void map_frozen ();
 	void color_handler ();
+	void selected_changed ();
 	void region_view_added (RegionView*);
 	void create_gain_automation_child (const Evoral::Parameter &, bool);
 	void create_trim_automation_child (const Evoral::Parameter &, bool);

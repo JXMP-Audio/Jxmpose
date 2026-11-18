@@ -468,6 +468,7 @@ AudioStreamView::color_handler ()
 	if (!_trackview.is_track()) {
 		canvas_rect->set_fill_color (UIConfiguration::instance().color_mod ("audio bus base", "audio bus base"));
 	}
+	apply_selection_tint ();
 }
 
 void

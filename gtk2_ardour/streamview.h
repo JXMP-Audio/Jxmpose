@@ -168,6 +168,13 @@ protected:
 
 	virtual void color_handler () = 0;
 
+public:
+	/** studio look: lighten the lane of the selected track */
+	void set_track_selected (bool yn);
+protected:
+	void apply_selection_tint ();
+	bool _track_selected;
+
 	RouteTimeAxisView&       _trackview;
 	ArdourCanvas::Container* _canvas_group;
 	ArdourCanvas::Rectangle*  canvas_rect; /* frame around the whole thing */

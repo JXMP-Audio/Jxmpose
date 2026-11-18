@@ -147,6 +147,7 @@ public:
 	bool hidden () const { return _hidden; }
 
 	void set_selected (bool);
+	virtual void selected_changed () {}
 
 	virtual bool selectable() const { return true; }
 

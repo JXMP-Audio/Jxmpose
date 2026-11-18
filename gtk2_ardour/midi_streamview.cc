@@ -429,6 +429,7 @@ MidiStreamView::color_handler ()
 	for (auto & rv : region_views) {
 		rv->color_handler ();
 	}
+	apply_selection_tint ();
 }
 
 void

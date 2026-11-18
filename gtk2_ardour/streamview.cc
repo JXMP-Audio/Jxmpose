@@ -51,6 +51,7 @@
 #include "timers.h"
 #include "gui_thread.h"
 #include "ui_config.h"
+#include "gtkmm2ext/cairo_theme.h"
 
 #include "pbd/i18n.h"
 
@@ -75,6 +76,7 @@ StreamView::StreamView (RouteTimeAxisView& tv, ArdourCanvas::Container* canvas_g
 
 	/* set_position() will position the group */
 
+	_track_selected = false;
 	canvas_rect = new ArdourCanvas::Rectangle (_canvas_group);
 	CANVAS_DEBUG_NAME (canvas_rect, string_compose ("SV canvas rectangle %1", _trackview.name()));
 	canvas_rect->set (ArdourCanvas::Rect (0, 0, ArdourCanvas::COORD_MAX, tv.current_height ()));
@@ -356,6 +358,31 @@ void
 StreamView::apply_color (Gdk::Color const& c, ColorTarget target)
 {
 	return apply_color (Gtkmm2ext::gdk_color_to_rgba (c), target);
+}
+
+void
+StreamView::set_track_selected (bool yn)
+{
+	if (yn == _track_selected) {
+		return;
+	}
+	_track_selected = yn;
+	color_handler ();
+}
+
+void
+StreamView::apply_selection_tint ()
+{
+	if (!_track_selected || !Gtkmm2ext::CairoTheme::studio_widgets ()) {
+		return;
+	}
+	/* mix 12% white into the lane background */
+	Gtkmm2ext::Color c = canvas_rect->fill_color ();
+	auto mix = [] (uint32_t v) { return (uint32_t) std::min (255.0, v + (255.0 - v) * 0.12); };
+	uint32_t r = mix ((c >> 24) & 0xff);
+	uint32_t g = mix ((c >> 16) & 0xff);
+	uint32_t b = mix ((c >> 8) & 0xff);
+	canvas_rect->set_fill_color ((r << 24) | (g << 16) | (b << 8) | (c & 0xff));
 }
 
 void

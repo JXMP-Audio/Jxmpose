@@ -1284,6 +1284,14 @@ RouteTimeAxisView::selection_click (GdkEventButton* ev)
 }
 
 void
+RouteTimeAxisView::selected_changed ()
+{
+	if (_view) {
+		_view->set_track_selected (selected ());
+	}
+}
+
+void
 RouteTimeAxisView::set_selected_points (PointSelection& points)
 {
 	StripableTimeAxisView::set_selected_points (points);
