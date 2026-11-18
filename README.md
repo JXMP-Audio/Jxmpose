@@ -38,8 +38,11 @@ Ardour project.
   pick a value to change their length, Delete removes, Up/Down transposes,
   Ctrl+Z undoes. Triplets, sixteenth triplets and quintuplets are recognised
   from the MIDI and written as such, overlapping lines become a second voice,
-  and the key signature comes from the track's key or is guessed from the
-  notes.
+  the key signature comes from the track's key or is guessed from the
+  notes (with key changes inside a region). Chord symbols (Dm9, G13, F/A …)
+  are recognised from the sounding notes, dynamics (pp–ff) and crescendo /
+  diminuendo hairpins from the velocities, accents from notes louder than
+  their line, and staccato from notes played much shorter than written.
 
 ## Building
 

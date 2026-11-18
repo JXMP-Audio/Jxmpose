@@ -216,6 +216,29 @@ private:
 	/** width of a key change at the start of a bar (cancelling naturals + new key) */
 	double key_change_width (int from, int to) const;
 
+	/* chord symbols (from the sounding notes, per beat), dynamics (from
+	 * velocities) and accents; ticks from the first bar */
+	struct ChordSym {
+		int64_t tick;
+		int     root;    ///< pitch class
+		int     quality; ///< index into the chord templates
+		int     bass;    ///< pitch class of a different bass note, or -1
+	};
+	struct DynMark {
+		int64_t tick;
+		int     level;   ///< 0 pp .. 5 ff
+	};
+	struct Hairpin {
+		int64_t start, end;
+		bool    cresc;
+	};
+	std::vector<ChordSym> _chords;
+	std::vector<DynMark>  _dyns;
+	std::vector<Hairpin>  _hairpins;
+	std::set<NotePtr>     _accents;
+	void analyze_harmony_and_dynamics (std::vector<std::pair<std::pair<int64_t, int64_t>, NotePtr>> const& notes, size_t n_bars);
+	void draw_chord_symbol (Cairo::RefPtr<Cairo::Context>, ChordSym const&, double x, double y, int fifths);
+
 	double system_height () const;
 	double staff_y (System const&, int staff) const;
 

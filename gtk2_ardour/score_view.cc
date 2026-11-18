@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <set>
@@ -69,6 +70,16 @@ enum : uint32_t {
 	AccFlat        = 0xE260,
 	AccNatural     = 0xE261,
 	AccSharp       = 0xE262,
+	ArticAccentAbove   = 0xE4A0,
+	ArticAccentBelow   = 0xE4A1,
+	ArticStaccatoAbove = 0xE4A2,
+	ArticStaccatoBelow = 0xE4A3,
+	DynamicPP      = 0xE52B,
+	DynamicP       = 0xE520,
+	DynamicMP      = 0xE52C,
+	DynamicMF      = 0xE52D,
+	DynamicF       = 0xE522,
+	DynamicFF      = 0xE52F,
 	RestWhole      = 0xE4E3,
 	RestHalf       = 0xE4E4,
 	RestQuarter    = 0xE4E5,
@@ -159,6 +170,83 @@ spell (uint8_t pitch, int& diatonic, int& alter, int fifths = 0)
 	int const octave = ((int) pitch - a) / 12 - 1;
 	diatonic = octave * 7 + l;
 	alter    = a;
+}
+
+/** chord templates: intervals above the root and the symbol suffix
+ * ('b' and '#' are drawn as accidentals) */
+struct ChordTemplate {
+	std::vector<int> iv;
+	char const*      name;
+};
+
+std::vector<ChordTemplate> const&
+chord_templates ()
+{
+	static const std::vector<ChordTemplate> t = {
+		{ { 0, 4, 7 }, "" },
+		{ { 0, 3, 7 }, "m" },
+		{ { 0, 3, 6 }, "dim" },
+		{ { 0, 4, 8 }, "+" },
+		{ { 0, 5, 7 }, "sus4" },
+		{ { 0, 2, 7 }, "sus2" },
+		{ { 0, 4, 7, 9 }, "6" },
+		{ { 0, 3, 7, 9 }, "m6" },
+		{ { 0, 4, 7, 10 }, "7" },
+		{ { 0, 4, 7, 11 }, "maj7" },
+		{ { 0, 3, 7, 10 }, "m7" },
+		{ { 0, 3, 7, 11 }, "m(maj7)" },
+		{ { 0, 3, 6, 10 }, "m7b5" },
+		{ { 0, 3, 6, 9 }, "dim7" },
+		{ { 0, 5, 7, 10 }, "7sus4" },
+		{ { 0, 2, 4, 7 }, "add9" },
+		{ { 0, 2, 3, 7 }, "m(add9)" },
+		{ { 0, 2, 4, 7, 9 }, "6/9" },
+		{ { 0, 2, 4, 7, 10 }, "9" },
+		{ { 0, 2, 4, 7, 11 }, "maj9" },
+		{ { 0, 2, 3, 7, 10 }, "m9" },
+		{ { 0, 1, 4, 7, 10 }, "7b9" },
+		{ { 0, 3, 4, 7, 10 }, "7#9" },
+		{ { 0, 2, 3, 5, 7, 10 }, "m11" },
+		{ { 0, 2, 4, 7, 9, 10 }, "13" },
+	};
+	return t;
+}
+
+/** chord root names: letter (0 = C .. 6 = B) and alteration for a pitch class in a key */
+void
+chord_root_name (int pc, int fifths, int& letter, int& alter)
+{
+	/* sharps in sharp keys (from D major on), flats in flat keys; in
+	 * between the usual names: C# Eb F# Ab Bb */
+	static const int sharp_l[12] = { 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6 };
+	static const int sharp_a[12] = { 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0 };
+	static const int flat_l[12]  = { 0, 1, 1, 2, 2, 3, 4, 4, 5, 5, 6, 6 };
+	static const int flat_a[12]  = { 0, -1, 0, -1, 0, 0, -1, 0, -1, 0, -1, 0 };
+	static const int mid_l[12]   = { 0, 0, 1, 2, 2, 3, 3, 4, 5, 5, 6, 6 };
+	static const int mid_a[12]   = { 0, 1, 0, -1, 0, 0, 1, 0, -1, 0, -1, 0 };
+	pc = ((pc % 12) + 12) % 12;
+	if (fifths >= 2) {
+		letter = sharp_l[pc];
+		alter  = sharp_a[pc];
+	} else if (fifths <= -2) {
+		letter = flat_l[pc];
+		alter  = flat_a[pc];
+	} else {
+		letter = mid_l[pc];
+		alter  = mid_a[pc];
+	}
+}
+
+/** dynamic level (0 pp .. 5 ff) of a velocity */
+int
+dyn_level (double vel)
+{
+	static const double upper[5] = { 44, 59, 73, 88, 104 };
+	int l = 0;
+	while (l < 5 && vel >= upper[l]) {
+		++l;
+	}
+	return l;
 }
 
 /** drum staff position (diatonic step, treble positions) and note head */
@@ -568,6 +656,21 @@ ScoreView::rebuild ()
 			return b * bt + ((off + g / 2) / g) * g;
 		};
 
+		std::vector<std::pair<std::pair<int64_t, int64_t>, NotePtr>> qnotes; /* quantized start, end */
+
+		std::vector<int64_t> next_on[2]; /* quantized note starts per staff */
+		for (auto const& n : model->notes ()) {
+			int64_t const s = _region->source_beats_to_absolute_beats (n->time ()).to_ticks () - origin;
+			if (s >= r_start && s < r_end) {
+				int const st = staff_of (n->note ());
+				next_on[st].push_back (quantize (st, s));
+			}
+		}
+		for (auto& v : next_on) {
+			std::sort (v.begin (), v.end ());
+			v.erase (std::unique (v.begin (), v.end ()), v.end ());
+		}
+
 		for (auto const& n : model->notes ()) {
 			int64_t s = _region->source_beats_to_absolute_beats (n->time ()).to_ticks () - origin;
 			int64_t e = _region->source_beats_to_absolute_beats (n->end_time ()).to_ticks () - origin;
@@ -576,6 +679,7 @@ ScoreView::rebuild ()
 			}
 			s = std::max (s, r_start);
 			e = std::min (e, r_end);
+			qnotes.push_back (std::make_pair (std::make_pair (quantize (staff_of (n->note ()), s), quantize (staff_of (n->note ()), e)), n));
 			bool const hit = (e - s) < grid / 2; /* drum hits, very short notes */
 
 			int const staff = staff_of (n->note ());
@@ -585,6 +689,20 @@ ScoreView::rebuild ()
 			e = quantize (staff, e);
 			if (e <= s) {
 				e = s + quarter / beat_div (staff, s);
+			}
+
+			/* detached notes are written up to the next note on their
+			 * staff when that is near (staccato instead of rests) */
+			if (!_percussion && !_drum_content) {
+				std::vector<int64_t> const& ns (next_on[staff]);
+				auto const it = std::upper_bound (ns.begin (), ns.end (), s);
+				int64_t const next = it == ns.end () ? -1 : *it;
+				if (next > e && next - s <= quarter && (next / _bar_len) == (s / _bar_len)) {
+					e = next;
+				} else if ((next < 0 || (next / _bar_len) != (s / _bar_len)) && e - s < eighth && s % eighth == 0 && beat_div (staff, s) == 4) {
+					/* the last one in the bar: an eighth */
+					e = std::min (s + eighth, (s / _bar_len + 1) * _bar_len);
+				}
 			}
 
 			/* split at bar lines, tied */
@@ -605,6 +723,8 @@ ScoreView::rebuild ()
 				s = bar_end;
 			}
 		}
+
+		analyze_harmony_and_dynamics (qnotes, n_bars);
 	}
 
 	/* two voices per staff: notes that overlap others (by more than a
@@ -714,6 +834,330 @@ ScoreView::rebuild ()
 	}
 
 	layout ();
+}
+
+void
+ScoreView::analyze_harmony_and_dynamics (std::vector<std::pair<std::pair<int64_t, int64_t>, NotePtr>> const& notes, size_t n_bars)
+{
+	_chords.clear ();
+	_dyns.clear ();
+	_hairpins.clear ();
+	_accents.clear ();
+
+	if (notes.empty ()) {
+		return;
+	}
+
+	/* chord symbols: per beat, the template that explains the most note
+	 * time (notes struck in the beat count more); a beat keeps the chord
+	 * before it unless the new chord fits clearly better (passing notes) */
+	if (!_percussion && !_drum_content) {
+		int64_t const bt     = beat_ticks ();
+		int64_t const n_beat = (int64_t) n_bars * _bar_len / bt;
+		auto const&   tpl    = chord_templates ();
+
+		struct Cand { int root, q, bass; double score; };
+		auto score = [&] (double const* w, int bass_pc, int root, int q) {
+			std::vector<int> const& iv (tpl[q].iv);
+			bool in[12] = { false };
+			for (int i : iv) {
+				in[(root + i) % 12] = true;
+			}
+			double s = 0;
+			for (int pc = 0; pc < 12; ++pc) {
+				s += in[pc] ? w[pc] : -w[pc];
+			}
+			for (int i : iv) {
+				if (w[(root + i) % 12] < 0.03) {
+					/* missing tones: the fifth may go, the root when it is not the bass, extensions may not */
+					s -= (i == 7) ? 0.02 : (i == 0 ? 0.05 : ((i == 3 || i == 4) ? 0.12 : 0.1));
+				}
+			}
+			s += (bass_pc == root) ? 0.08 : 0;
+			s -= 0.012 * iv.size ();
+			return s;
+		};
+
+		ChordSym cur;
+		cur.tick    = -1;
+		cur.quality = -1;
+		for (int64_t b = 0; b < n_beat; ++b) {
+			int64_t const b0 = b * bt, b1 = b0 + bt;
+			if (b1 <= _r_start || b0 >= _r_end) {
+				continue;
+			}
+			double w[12] = { 0 };
+			int    low = 128;
+			for (auto const& qn : notes) {
+				int64_t const s = qn.first.first, e = qn.first.second;
+				int64_t const ov = std::min (e, b1) - std::max (s, b0);
+				if (ov <= 0) {
+					continue;
+				}
+				int const p = qn.second->note ();
+				w[p % 12] += ov + ((s >= b0) ? bt / 2 : 0);
+				if (ov >= bt / 4 || s >= b0) {
+					low = std::min (low, p);
+				}
+			}
+			double tot = 0;
+			for (double v : w) {
+				tot += v;
+			}
+			if (tot < bt * 0.75) {
+				/* (nearly) nothing sounds: the previous chord goes on */
+				continue;
+			}
+			for (double& v : w) {
+				v /= tot;
+			}
+			int const bass_pc = low < 128 ? low % 12 : -1;
+
+			Cand best = { 0, 0, -1, -1e9 };
+			for (int r = 0; r < 12; ++r) {
+				for (size_t q = 0; q < tpl.size (); ++q) {
+					double const s = score (w, bass_pc, r, q);
+					if (s > best.score) {
+						best = { r, (int) q, -1, s };
+					}
+				}
+			}
+			if (best.score < 0.2) {
+				continue;
+			}
+			best.bass = (bass_pc >= 0 && bass_pc != best.root) ? bass_pc : -1;
+			if (cur.quality >= 0) {
+				if (best.root == cur.root && best.q == cur.quality && best.bass == cur.bass) {
+					continue;
+				}
+				double const keep = score (w, bass_pc, cur.root, cur.quality);
+				if (keep >= best.score - 0.15 && (b % (_bar_len / bt)) != 0) {
+					/* passing notes inside the bar */
+					continue;
+				}
+				if (keep >= best.score - 0.04) {
+					continue;
+				}
+			}
+			cur.tick    = b0;
+			cur.root    = best.root;
+			cur.quality = best.q;
+			cur.bass    = best.bass;
+			_chords.push_back (cur);
+		}
+	}
+
+	/* dynamics: onsets (both staves) with their mean velocity, smoothed
+	 * over the neighbours; marks where the level changes for good,
+	 * hairpins over steady rises and falls, accents on notes clearly
+	 * louder than their surroundings */
+	std::map<int64_t, std::vector<NotePtr>> by_onset;
+	for (auto const& qn : notes) {
+		by_onset[qn.first.first].push_back (qn.second);
+	}
+	/* accents: notes clearly louder than the notes of the same line (the
+	 * nearest pitch on their staff) before and after them */
+	{
+		std::vector<std::vector<NotePtr>> groups[2];
+		for (auto const& o : by_onset) {
+			std::vector<NotePtr> g[2];
+			for (auto const& nt : o.second) {
+				int const st = _percussion ? (is_foot (nt->note ()) ? 1 : 0) : (nt->note () >= 60 ? 0 : 1);
+				g[st].push_back (nt);
+			}
+			for (int st = 0; st < 2; ++st) {
+				if (!g[st].empty ()) {
+					groups[st].push_back (g[st]);
+				}
+			}
+		}
+		for (int st = 0; st < 2; ++st) {
+			std::vector<std::vector<NotePtr>> const& gs (groups[st]);
+			auto nearest = [&] (size_t gi, int pitch, double& vel) {
+				int best = 128;
+				for (auto const& nt : gs[gi]) {
+					int const d = std::abs ((int) nt->note () - pitch);
+					if (d < best && d <= 12) {
+						best = d;
+						vel  = nt->velocity ();
+					}
+				}
+				return best < 128;
+			};
+			for (size_t i = 0; i < gs.size (); ++i) {
+				for (auto const& nt : gs[i]) {
+					double sum = 0, v = 0;
+					int    cnt = 0;
+					if (i > 0 && nearest (i - 1, nt->note (), v)) {
+						sum += v;
+						++cnt;
+					}
+					if (i + 1 < gs.size () && nearest (i + 1, nt->note (), v)) {
+						sum += v;
+						++cnt;
+					}
+					if (cnt && nt->velocity () >= sum / cnt + ((_percussion || _drum_content) ? 22 : 18) && nt->velocity () >= 70) {
+						_accents.insert (nt);
+					}
+				}
+			}
+		}
+	}
+
+	if (_percussion || _drum_content) {
+		return;
+	}
+
+	/* the level of an onset leaves its accents out */
+	std::vector<int64_t> ticks;
+	std::vector<double>  mean;
+	for (auto const& o : by_onset) {
+		double v = 0;
+		int    c = 0;
+		for (auto const& nt : o.second) {
+			if (!_accents.count (nt)) {
+				v += nt->velocity ();
+				++c;
+			}
+		}
+		if (c) {
+			ticks.push_back (o.first);
+			mean.push_back (v / c);
+		}
+	}
+	size_t const n = ticks.size ();
+	std::vector<double> sm (n);
+	for (size_t i = 0; i < n; ++i) {
+		double a[3] = { mean[i > 0 ? i - 1 : i], mean[i], mean[i + 1 < n ? i + 1 : i] };
+		std::sort (a, a + 3);
+		sm[i] = a[1];
+	}
+
+	/* hairpins: at least 4 onsets over a beat or more that keep rising (falling) by 18 or more */
+	std::vector<bool> in_pin (n, false);
+	for (size_t i = 0; i + 3 < n;) {
+		size_t j = i;
+		int    dir = 0;
+		while (j + 1 < n) {
+			double const d = sm[j + 1] - sm[j];
+			int const    sd = d > 2 ? 1 : (d < -2 ? -1 : 0);
+			if (dir == 0 && sd != 0) {
+				dir = sd;
+			}
+			if ((dir > 0 && d < -2) || (dir < 0 && d > 2)) {
+				break;
+			}
+			++j;
+		}
+		/* flat ends are not part of it */
+		size_t a = i;
+		while (a < j && std::abs (sm[a + 1] - sm[a]) <= 2) {
+			++a;
+		}
+		size_t z = j;
+		while (z > a && std::abs (sm[z] - sm[z - 1]) <= 2) {
+			--z;
+		}
+		int steps = 0;
+		for (size_t k = a; k < z; ++k) {
+			steps += std::abs (sm[k + 1] - sm[k]) > 2;
+		}
+		if (dir != 0 && steps >= 3 && std::abs (sm[z] - sm[a]) >= 18 && ticks[z] - ticks[a] >= quarter) {
+			i = a;
+			j = z;
+			Hairpin hp;
+			hp.start = ticks[i];
+			hp.end   = ticks[j];
+			hp.cresc = dir > 0;
+			_hairpins.push_back (hp);
+			for (size_t k = i + 1; k < j; ++k) {
+				in_pin[k] = true;
+			}
+			i = j;
+		} else {
+			++i;
+		}
+	}
+
+	/* marks with hysteresis: a level change needs the smoothed velocity a
+	 * few steps past the boundary */
+	static const double upper[5] = { 44, 59, 73, 88, 104 };
+	int cur = -1;
+	for (size_t i = 0; i < n; ++i) {
+		if (in_pin[i]) {
+			continue;
+		}
+		int const l = dyn_level (sm[i]);
+		if (cur >= 0) {
+			double const lo = cur > 0 ? upper[cur - 1] - 5 : -1e9;
+			double const hi = cur < 5 ? upper[cur] + 5 : 1e9;
+			if (sm[i] >= lo && sm[i] < hi) {
+				continue;
+			}
+		}
+		if (cur >= 0 && i + 1 < n && !in_pin[i + 1] && dyn_level (sm[i + 1]) == cur) {
+			/* only one onset: not a new level */
+			continue;
+		}
+		if (l != cur) {
+			DynMark m;
+			m.tick  = ticks[i];
+			m.level = l;
+			_dyns.push_back (m);
+			cur = l;
+		}
+	}
+}
+
+void
+ScoreView::draw_chord_symbol (Cairo::RefPtr<Cairo::Context> cr, ChordSym const& c, double x, double y, int fifths)
+{
+	double const fs = _sp * 1.7;
+	auto text = [&] (std::string const& s, double size, double dy) {
+		cr->select_font_face ("Barlow", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_BOLD);
+		cr->set_font_size (size);
+		cr->move_to (x, y + dy);
+		cr->show_text (s);
+		Cairo::TextExtents te;
+		cr->get_text_extents (s, te);
+		x += te.x_advance;
+	};
+	auto acc = [&] (int alter, double size) {
+		if (!alter) {
+			return;
+		}
+		uint32_t const g = alter > 0 ? AccSharp : AccFlat;
+		double const   sc = size / (_sp * 4) * 1.0;
+		draw_glyph (cr, g, x + _sp * 0.08, y - size * 0.36, sc);
+		x += glyph_width (cr, g) * sc + _sp * 0.15;
+	};
+	auto note_name = [&] (int pc, double size) {
+		int l, a;
+		chord_root_name (pc, fifths, l, a);
+		text (std::string (1, "CDEFGAB"[l]), size, 0);
+		acc (a, size);
+	};
+
+	note_name (c.root, fs);
+	/* the suffix is smaller and raised; b/# before a number are accidentals */
+	std::string const suffix (chord_templates ()[c.quality].name);
+	double const ss = fs * 0.72;
+	std::string run;
+	for (size_t i = 0; i < suffix.size (); ++i) {
+		char const ch = suffix[i];
+		if ((ch == 'b' || ch == '#') && i + 1 < suffix.size () && isdigit (suffix[i + 1])) {
+			text (run, ss, -fs * 0.28);
+			run.clear ();
+			acc (ch == '#' ? 1 : -1, ss);
+		} else {
+			run += ch;
+		}
+	}
+	text (run, ss, -fs * 0.28);
+	if (c.bass >= 0) {
+		text ("/", fs, 0);
+		note_name (c.bass, fs);
+	}
 }
 
 void
@@ -1287,6 +1731,8 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 				std::vector<double> stem_x (pieces.size (), 0);
 				std::vector<double> piece_x (pieces.size (), 0);
 				std::vector<double> piece_top (pieces.size (), 1e9); /* highest ink, for tuplet numbers */
+				std::vector<std::pair<size_t, double>> accent_above, accent_below; /* piece, x */
+				std::vector<double> piece_bottom (pieces.size (), -1e9);
 
 				for (size_t k = 0; k < pieces.size (); ++k) {
 					Piece const& p (pieces[k]);
@@ -1459,6 +1905,44 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 						}
 					}
 
+					/* articulations, opposite the stem: staccato for notes
+					 * played much shorter than written, accents */
+					{
+						bool tied_in = true;
+						bool tie_out = false;
+						bool accent  = false;
+						int64_t played = 0;
+						for (size_t m = 0; m < p.pitches.size (); ++m) {
+							tied_in &= pending_tie[st].count (p.pitches[m]) > 0;
+							tie_out |= m < p.tie_out.size () && p.tie_out[m];
+						}
+						for (auto const& nt : p.notes) {
+							if (nt) {
+								accent |= _accents.count (nt) > 0;
+								played = std::max<int64_t> (played, nt->length ().to_ticks ());
+							}
+						}
+						bool const staccato = !_percussion && !tied_in && !tie_out && p.len <= quarter && played > 0 && played * 2 <= p.len;
+						if (!tied_in && accent && _percussion) {
+							/* drums: outside the stems and beams */
+							(up ? accent_above : accent_below).push_back (std::make_pair (k, x + headw / 2));
+							accent = false;
+						}
+						if (!tied_in && (staccato || accent)) {
+							double const cx = x + headw / 2 + (any_displaced ? (up ? (headw - stem_w) / 2 : -(headw - stem_w) / 2) : 0);
+							double       ay = up ? y_of (dmin) + sp * 1.1 : y_of (dmax) - sp * 1.1;
+							if (staccato) {
+								uint32_t const g = up ? ArticStaccatoBelow : ArticStaccatoAbove;
+								draw_glyph (cr, g, cx - glyph_width (cr, g) / 2, ay);
+								ay += up ? sp * 0.9 : -sp * 0.9;
+							}
+							if (accent) {
+								uint32_t const g = up ? ArticAccentBelow : ArticAccentAbove;
+								draw_glyph (cr, g, cx - glyph_width (cr, g) / 2, ay + (up ? sp * 0.3 : 0));
+							}
+						}
+					}
+
 					piece_x[k]   = x;
 					piece_top[k] = y_of (dmax) - sp * 0.6;
 
@@ -1477,6 +1961,8 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 						stem_x[k] = sx;
 						if (up) {
 							piece_top[k] = std::min (piece_top[k], y1);
+						} else {
+							piece_bottom[k] = y1;
 						}
 						cr->set_line_width (stem_w);
 						cr->move_to (sx, y0);
@@ -1561,6 +2047,15 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 					}
 				}
 
+				for (auto const& aa : accent_above) {
+					double const w = glyph_width (cr, ArticAccentAbove);
+					draw_glyph (cr, ArticAccentAbove, aa.second - w / 2, std::min (piece_top[aa.first], top) - sp * 0.8);
+				}
+				for (auto const& aa : accent_below) {
+					double const w = glyph_width (cr, ArticAccentBelow);
+					draw_glyph (cr, ArticAccentBelow, aa.second - w / 2, std::max (piece_bottom[aa.first], bottom) + sp * 1.3);
+				}
+
 				/* triplet numbers (and a bracket unless the beat is one beam) */
 				for (size_t k = 0; k < pieces.size ();) {
 					if (!pieces[k].tuplet) {
@@ -1593,6 +2088,69 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 						cr->stroke ();
 					}
 					k = e;
+				}
+			}
+
+			/* x of any tick in the bar: between the onsets */
+			{
+				int64_t const bar0 = (int64_t) (sys.first_bar + bi) * _bar_len;
+				std::vector<std::pair<int64_t, double>> pts;
+				if (bar.onsets.empty () || bar.onsets.front () > 0) {
+					pts.push_back (std::make_pair ((int64_t) 0, bx + (sp * 1.4 + bar.key_x) * sys.stretch));
+				}
+				for (auto t : bar.onsets) {
+					pts.push_back (std::make_pair (t, onset_x (t)));
+				}
+				pts.push_back (std::make_pair (_bar_len, bx + bw));
+				auto tick_x = [&] (int64_t t) {
+					for (size_t k = 0; k + 1 < pts.size (); ++k) {
+						if (t >= pts[k].first && t <= pts[k + 1].first) {
+							double const f = (double) (t - pts[k].first) / std::max<int64_t> (1, pts[k + 1].first - pts[k].first);
+							return pts[k].second + f * (pts[k + 1].second - pts[k].second);
+						}
+					}
+					return pts.back ().second;
+				};
+
+				/* chord symbols above the treble staff */
+				for (auto const& ch : _chords) {
+					if (ch.tick >= bar0 && ch.tick < bar0 + _bar_len) {
+						draw_chord_symbol (cr, ch, tick_x (ch.tick - bar0), top0 - sp * 2.6, cur_fifths);
+					}
+				}
+
+				/* dynamics and hairpins between the staves (below the drum staff) */
+				double const dyn_y = top0 + sp * 8.1;
+				for (auto const& d : _dyns) {
+					if (d.tick >= bar0 && d.tick < bar0 + _bar_len) {
+						static const uint32_t glyph[6] = { DynamicPP, DynamicP, DynamicMP, DynamicMF, DynamicF, DynamicFF };
+						draw_glyph (cr, glyph[d.level], tick_x (d.tick - bar0) - sp * 0.4, dyn_y);
+					}
+				}
+				for (auto const& hp : _hairpins) {
+					int64_t const s = std::max (hp.start, bar0);
+					int64_t const e = std::min (hp.end, bar0 + _bar_len);
+					if (e <= s) {
+						continue;
+					}
+					double const len  = std::max<int64_t> (1, hp.end - hp.start);
+					double const open = sp * 0.75;
+					auto half = [&] (int64_t t) {
+						double const f = (t - hp.start) / len;
+						return open * (hp.cresc ? f : 1 - f);
+					};
+					double const x0 = tick_x (s - bar0) + (s == hp.start ? sp * 1.8 : 0);
+					double const x1 = tick_x (e - bar0) - (e == hp.end ? sp * 0.9 : 0);
+					if (x1 - x0 < sp) {
+						continue;
+					}
+					double const yc = dyn_y - sp * 0.45;
+					cr->set_line_width (line_w);
+					cr->move_to (x0, yc - half (s));
+					cr->line_to (x1, yc - half (e));
+					cr->move_to (x0, yc + half (s));
+					cr->line_to (x1, yc + half (e));
+					cr->stroke ();
 				}
 			}
 
