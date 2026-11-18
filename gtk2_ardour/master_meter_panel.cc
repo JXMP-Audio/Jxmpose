@@ -206,7 +206,7 @@ MasterMeterPanel::MasterMeterPanel ()
 	set_tooltip (_level_tab, _("Sample peak level of the master output (dBFS)"));
 	set_tooltip (_loudness_tab, _("EBU R128 loudness of the master output (LUFS), loudness range and true peak"));
 	set_tooltip (_reset_button, _("Reset peak holds and integrated loudness (also reset when playback starts)"));
-	set_tooltip (_target_dd, _("Loudness target, drawn as the orange line"));
+	set_tooltip (_target_dd, _("Loudness target (integrated LUFS), drawn as the orange line"));
 
 	Gtk::HBox* tabs = Gtk::manage (new Gtk::HBox (true, 2));
 	tabs->pack_start (_level_tab);
@@ -282,7 +282,7 @@ void
 MasterMeterPanel::update_target_label ()
 {
 	char buf[64];
-	snprintf (buf, sizeof (buf), "%s %.1f LUFS", _("Target"), UIConfiguration::instance ().get_master_meter_loudness_target ());
+	snprintf (buf, sizeof (buf), "%.1f LUFS", UIConfiguration::instance ().get_master_meter_loudness_target ());
 	_target_dd.set_text (buf);
 }
 
@@ -363,7 +363,7 @@ void
 MasterMeterPanel::Display::on_size_request (Gtk::Requisition* req)
 {
 	float s = UIConfiguration::instance ().get_ui_scale ();
-	req->width  = 120 * s;
+	req->width  = 100 * s;
 	req->height = 320 * s;
 }
 

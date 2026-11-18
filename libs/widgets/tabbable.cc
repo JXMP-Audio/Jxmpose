@@ -241,7 +241,7 @@ Tabbable::default_layout ()
 
 	/* set default pane positions */
 	content_right_pane.set_check_divider_position (true);
-	content_right_pane.set_divider (0, 0.85);
+	content_right_pane.set_divider (0, CairoTheme::studio_widgets () ? 0.9 : 0.85);
 
 	content_left_pane.set_check_divider_position (true);
 	content_left_pane.set_divider (0, 0.15);

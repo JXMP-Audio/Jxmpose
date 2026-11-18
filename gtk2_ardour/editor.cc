@@ -5699,7 +5699,6 @@ Editor::setup_studio_editor_list ()
 	struct { const char* label; const char* tip; Gtk::Widget* w; } tabs[] = {
 		{ _("Tracks"),  _("Tracks & Busses"), &_routes->widget () },
 		{ _("Regions"), _("Regions"),         &_regions->widget () },
-		{ _("Marks"),   _("Ranges & Marks"),  &_locations->widget () },
 		{ _("Meter"),   _("Master Meter"),    _master_meter_panel },
 	};
 
@@ -5711,6 +5710,7 @@ Editor::setup_studio_editor_list ()
 		ArdourButton* b = manage (new ArdourButton (t.label));
 		b->set_name ("tab button");
 		b->set_corner_radius (2);
+		b->set_layout_font (UIConfiguration::instance ().get_SmallFont ());
 		set_tooltip (*b, t.tip);
 		Gtk::Widget* w = t.w;
 		b->signal_clicked.connect ([this, w] () {
@@ -5730,10 +5730,14 @@ Editor::setup_studio_editor_list ()
 				}));
 	}
 	_studio_list_more.set_name ("tab button");
-	_studio_list_more.set_text (_("More"));
-	_studio_list_more.set_sizing_texts ({ _("More") });
+	/* compact: just the arrow, so the right zone can be narrow */
+	_studio_list_more.set_text ("");
+	_studio_list_more.set_sizing_texts ({ "" });
 	set_tooltip (_studio_list_more, _("All sidebar pages"));
-	tabrow->pack_start (_studio_list_more, true, true);
+	tabrow->pack_start (_studio_list_more, false, false);
+
+	/* the clip picker would otherwise dictate a wide sidebar */
+	_trigger_clip_picker.set_size_request (std::min (_trigger_clip_picker.size_request ().width, (int) rint (150 * UIConfiguration::instance ().get_ui_scale ())), -1);
 
 	_notebook_tabbox->hide ();
 	_notebook_tabbox->set_no_show_all ();
