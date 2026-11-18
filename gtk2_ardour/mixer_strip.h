@@ -87,6 +87,8 @@ class ArdourWindow;
 class AutomationController;
 class TriggerBoxWidget;
 
+class QuickControls;
+
 class MixerStrip : public AxisView, public RouteUI, public Gtk::EventBox
 {
 public:
@@ -202,6 +204,7 @@ private:
 
 	ProcessorBox processor_box;
 	ProcessorBox* _sends_box; // studio Inspector only
+	QuickControls* _quick_controls; // studio Inspector only
 	GainMeter    gpm;
 	PannerUI     panners;
 

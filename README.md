@@ -44,6 +44,11 @@ Ardour project.
   diminuendo hairpins from the velocities, accents from notes louder than
   their line, and staccato from notes played much shorter than written.
 
+- **Quick Controls** — eight knobs per track in the Inspector. They follow
+  the first parameters of the track's instrument until you right-click a
+  knob and pick any parameter of any plugin on the track; Ctrl+middle-click
+  learns a MIDI controller. Assignments are saved with the session.
+
 ## Building
 
 JXMPOSE builds exactly like Ardour, with `waf`. A **full git clone with tags**

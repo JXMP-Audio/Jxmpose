@@ -82,6 +82,7 @@
 #include "context_menu_helper.h"
 #include "enums_convert.h"
 #include "mixer_strip.h"
+#include "quick_controls.h"
 #include "studio_section.h"
 #include "mixer_strip_decor.h"
 #include "mixer_ui.h"
@@ -120,6 +121,7 @@ MixerStrip::MixerStrip (Mixer_UI& mx, Session* sess, bool in_mixer)
 	, _mixer_owned (in_mixer)
 	, processor_box (sess, std::bind (&MixerStrip::plugin_selector, this), mx.selection(), this, in_mixer)
 	, _sends_box (0)
+	, _quick_controls (0)
 	, gpm (sess, 250)
 	, panners (sess)
 	, button_size_group (Gtk::SizeGroup::create (Gtk::SIZE_GROUP_HORIZONTAL))
@@ -158,6 +160,7 @@ MixerStrip::MixerStrip (Mixer_UI& mx, Session* sess, std::shared_ptr<Route> rt, 
 	, _mixer_owned (in_mixer)
 	, processor_box (sess, std::bind (&MixerStrip::plugin_selector, this), mx.selection(), this, in_mixer)
 	, _sends_box (0)
+	, _quick_controls (0)
 	, gpm (sess, 250)
 	, panners (sess)
 	, button_size_group (Gtk::SizeGroup::create (Gtk::SIZE_GROUP_HORIZONTAL))
@@ -558,6 +561,9 @@ MixerStrip::set_route (std::shared_ptr<Route> rt)
 	processor_box.set_route (rt);
 	if (_sends_box) {
 		_sends_box->set_route (rt);
+	}
+	if (_quick_controls) {
+		_quick_controls->set_route (rt);
 	}
 
 	revert_to_default_display ();
@@ -1540,6 +1546,7 @@ MixerStrip::build_inspector_layout ()
 	processor_box.set_size_request (-1, rintf ((_embedded ? 96.f : 120.f) * UIConfiguration::instance ().get_ui_scale ()));
 
 	StudioSection* sends = 0;
+	StudioSection* quick = 0;
 	if (_embedded) {
 		/* Inspector: inserts and sends in separate sections */
 		processor_box.set_display_filter (ProcessorBox::InsertsOnly);
@@ -1554,6 +1561,13 @@ MixerStrip::build_inspector_layout ()
 		_sends_box->set_size_request (-1, rintf (56.f * UIConfiguration::instance ().get_ui_scale ()));
 		sends = manage (new StudioSection (_("Sends"), pfx + X_("sends"), false));
 		sends->add_item (*_sends_box, true);
+
+		_quick_controls = manage (new QuickControls);
+		if (_route) {
+			_quick_controls->set_route (_route);
+		}
+		quick = manage (new StudioSection (_("Quick Controls"), pfx + X_("quick-controls"), false));
+		quick->add_item (*_quick_controls);
 	}
 
 	StudioSection* channel = manage (new StudioSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), true));
@@ -1573,6 +1587,9 @@ MixerStrip::build_inspector_layout ()
 	global_vpacker.pack_start (*inserts, false, false);
 	if (sends) {
 		global_vpacker.pack_start (*sends, false, false);
+	}
+	if (quick) {
+		global_vpacker.pack_start (*quick, false, false);
 	}
 
 	/* fader zone stays at the bottom when racks above are collapsed */
@@ -1600,6 +1617,10 @@ MixerStrip::build_inspector_layout ()
 	if (sends) {
 		sends->show ();
 		sends->refresh ();
+	}
+	if (quick) {
+		quick->show ();
+		quick->refresh ();
 	}
 }
 
