@@ -285,6 +285,7 @@ ScoreView::ScoreView ()
 	, _drag_dt (0)
 	, _drag_dp (0)
 	, _fifths (0)
+	, _drum_content (false)
 {
 	add_events (Gdk::SCROLL_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::BUTTON1_MOTION_MASK | Gdk::KEY_PRESS_MASK);
 	set_can_focus (true);
@@ -308,6 +309,15 @@ ScoreView::set_region (std::shared_ptr<MidiRegion> r)
 		_region->PropertyChanged.connect (_connections, invalidator (*this), std::bind (&ScoreView::model_changed, this), gui_context ());
 	}
 	rebuild ();
+}
+
+void
+ScoreView::set_drum_content (bool yn)
+{
+	if (_drum_content != yn) {
+		_drum_content = yn;
+		rebuild ();
+	}
 }
 
 void
@@ -401,7 +411,7 @@ ScoreView::rebuild ()
 		 * the least note time outside its scale; the track's key when the
 		 * notes fit it about as well */
 		_fifths = 0;
-		if (!_percussion) {
+		if (!_percussion && !_drum_content) {
 			double w[12] = { 0 };
 			double total = 0;
 			for (auto const& n : model->notes ()) {
@@ -782,7 +792,8 @@ ScoreView::split_piece (size_t bar_index, int staff, int64_t start, int64_t len,
 			} else {
 				int64_t const units = chunk / u;
 				int64_t n = 1;
-				for (int64_t c : (dv == 3 ? std::vector<int64_t> { 2, 1 } : std::vector<int64_t> { 4, 3, 2, 1 })) {
+				/* rests are written without dots */
+				for (int64_t c : (dv == 3 ? std::vector<int64_t> { 2, 1 } : (dots ? std::vector<int64_t> { 4, 3, 2, 1 } : std::vector<int64_t> { 4, 2, 1 }))) {
 					if (c <= units) {
 						n = c;
 						break;
@@ -1641,22 +1652,40 @@ ScoreView::add_note (int64_t tick, uint8_t pitch)
 	}
 	Beats const start = _region->absolute_time_to_source_beats (timepos_t (Beats::ticks (_origin + tick)));
 
-	/* the same note is already there: select it instead of stacking a copy */
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("add note"));
+
 	{
 		MidiModel::ReadLock lm (model->read_lock ());
 		for (auto const& e : model->notes ()) {
+			/* the same note is already there: select it instead of stacking a copy */
 			if (e->note () == pitch && e->time () == start) {
+				delete cmd;
 				_selection.clear ();
 				_selection.insert (e);
 				queue_draw ();
 				return;
 			}
 		}
+		/* notes on the same staff do not overlap the new one (that would
+		 * make a second voice): it ends where the next one starts, and a
+		 * note sounding into it ends there; same start makes a chord */
+		if (!_percussion) {
+			for (auto const& e : model->notes ()) {
+				if ((e->note () >= 60) != (pitch >= 60)) {
+					continue;
+				}
+				int64_t const et = note_tick (e);
+				int64_t const ee = et + e->length ().to_ticks ();
+				if (et > tick && et < tick + len) {
+					len = et - tick;
+				} else if (et < tick && ee > tick) {
+					cmd->change (e, MidiModel::NoteDiffCommand::Length, Beats::ticks (tick - et));
+				}
+			}
+		}
 	}
 
 	NotePtr n (new Evoral::Note<Beats> (_channel, start, Beats::ticks (len), pitch, 100));
-
-	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("add note"));
 	cmd->add (n);
 	model->apply_diff_command_as_commit (*_history, cmd);
 
@@ -1747,9 +1776,7 @@ ScoreView::on_button_press_event (GdkEventButton* ev)
 	size_t  b;
 	uint8_t pitch;
 	if (_insert_len > 0 && pitch_at (ev->x, ev->y, b, pitch)) {
-		int64_t const step = snap_step ();
-		int64_t const t    = (time_in_bar (_bars[b], ev->x) / step) * step;
-		int64_t const tick = b * _bar_len + t;
+		int64_t const tick = b * _bar_len + snap_time (time_in_bar (_bars[b], ev->x));
 		if (tick >= _r_start && tick < _r_end) {
 			add_note (tick, pitch);
 			return true;
@@ -1793,6 +1820,17 @@ int64_t
 ScoreView::snap_step () const
 {
 	return _insert_len > 0 ? std::min (_insert_len, quarter) : grid;
+}
+
+int64_t
+ScoreView::snap_time (int64_t t) const
+{
+	/* the grid restarts on every beat (tuplet steps do not add up
+	 * across beats), or every half note for quarter triplets */
+	int64_t const step   = snap_step ();
+	int64_t const period = (quarter % step == 0) ? quarter : ((2 * quarter) % step == 0 ? 2 * quarter : _bar_len);
+	int64_t const p0     = (t / period) * period;
+	return std::min (_bar_len - 1, p0 + ((t - p0) / step) * step);
 }
 
 int64_t
@@ -1874,11 +1912,11 @@ ScoreView::on_motion_notify_event (GdkEventMotion* ev)
 	size_t  b;
 	uint8_t pitch;
 	if (pitch_at (ev->x, ev->y, b, pitch)) {
-		int64_t const step = snap_step ();
-		int64_t const t    = b * _bar_len + (time_in_bar (_bars[b], ev->x) / step) * step;
+		int64_t const t    = b * _bar_len + snap_time (time_in_bar (_bars[b], ev->x));
 		int64_t const t0   = note_tick (_drag_note);
+		int64_t const b0   = (t0 / _bar_len) * _bar_len;
 		/* keep the grabbed note's offset from the snap grid */
-		int64_t const dt   = t - (t0 / step) * step;
+		int64_t const dt   = t - (b0 + snap_time (t0 - b0));
 		int const     dp   = (int) pitch - (int) _drag_note->note ();
 		if (dt != _drag_dt || dp != _drag_dp) {
 			_drag_dt = dt;

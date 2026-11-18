@@ -177,6 +177,7 @@ PianorollWindow::set_editor_mode (EditorMode m)
 		/* drums (drum view or MIDI channel 10) start as drum notation */
 		bool const drums = pianoroll->note_mode () == ARDOUR::Percussive || pianoroll->visible_channel () == 9;
 		drum_notation_button.set_active (drums);
+		score_view.set_drum_content (drums);
 		score_view.set_percussion (drums);
 		score_view.set_history (&pianoroll->history ());
 		score_view.set_channel (pianoroll->visible_channel ());

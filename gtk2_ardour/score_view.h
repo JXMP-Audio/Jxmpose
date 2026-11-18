@@ -69,6 +69,8 @@ public:
 	 * (kick, pedal hi-hat) stems down, cymbals with x note heads */
 	void set_percussion (bool);
 	bool percussion () const { return _percussion; }
+	/** the region holds drums: no key signature, even on the grand staff */
+	void set_drum_content (bool);
 
 	/** undo history for edits (the pianoroll's) */
 	void set_history (PBD::HistoryOwner* h) { _history = h; }
@@ -181,6 +183,8 @@ private:
 	int64_t note_tick (NotePtr const&) const;
 	bool    position_of (int64_t tick, uint8_t pitch, double& x, double& y) const;
 	int64_t snap_step () const;
+	int64_t snap_time (int64_t ticks_in_bar) const;
+	bool    _drum_content;
 	void    play (NotePtr const&);
 
 	bool    pitch_at (double x, double y, size_t& bar, uint8_t& pitch) const;
