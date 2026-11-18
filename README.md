@@ -7,9 +7,7 @@ browser and master loudness meter, compact track headers and a console-style
 mixer.
 
 JXMPOSE is a fork of Ardour. It is **not** affiliated with or endorsed by the
-Ardour project, and it is not affiliated with any other DAW vendor. All
-product names mentioned anywhere in this repository belong to their
-respective owners.
+Ardour project.
 
 > **Status:** work in progress. The interface redesign lives on the
 > `jxmp-ui-phase1` branch; `master` tracks upstream Ardour.
