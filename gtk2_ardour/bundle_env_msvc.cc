@@ -494,6 +494,22 @@ void load_custom_fonts()
 		}
 	}
 
+	/* optional UI fonts (JXMP look) and the music notation font (SMuFL)
+	 * of the score editor; silently skipped when not installed */
+	static const char* const optional_fonts[] = {
+		"Barlow-Medium.ttf",
+		"Barlow-SemiBold.ttf",
+		"Barlow-BoldItalic.ttf",
+		"Leland.otf",
+	};
+	Searchpath font_path (ardour_data_search_path ());
+	font_path.add_subdirectory_to_paths ("fonts");
+	for (auto const& f : optional_fonts) {
+		if (find_file (font_path, f, font_file)) {
+			FcConfigAppFontAddFile (config, reinterpret_cast<const FcChar8*>(font_file.c_str()));
+		}
+	}
+
 	if (FcFalse == FcConfigSetCurrent(config)) {
 		cerr << _("Failed to set fontconfig configuration.") << endl;
 	}

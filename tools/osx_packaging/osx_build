@@ -576,6 +576,8 @@ cp ../../gtk2_ardour/icons/*.png ${Resources}/icons/
 cp -r ../../gtk2_ardour/icons/cursor_* ${Resources}/icons/
 cp ../../gtk2_ardour/ArdourMono.ttf $Shared
 cp ../../gtk2_ardour/ArdourSans.ttf $Shared
+mkdir -p $Shared/fonts
+cp ../../gtk2_ardour/fonts/*.ttf ../../gtk2_ardour/fonts/*.otf ../../gtk2_ardour/fonts/OFL-*.txt $Shared/fonts/
 cp ../../gtk2_ardour/resources/${PRODUCT_PKG_DIR}-* ${Resources}/resources/
 
 

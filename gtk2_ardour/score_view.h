@@ -124,6 +124,7 @@ public:
 		double               width;
 		double               x;        ///< left edge (set by layout)
 		size_t               system;   ///< system index (set by layout)
+		double               key_x;    ///< room for a key change at the bar start (0: none)
 	};
 
 protected:
@@ -208,8 +209,12 @@ private:
 	static void piece_value (Piece const&, int64_t& base, bool& dotted);
 
 	/* key signature: number of sharps (> 0) or flats (< 0) */
-	int    _fifths;
-	double key_width () const;
+	int              _fifths;      ///< key of the first bar
+	std::vector<int> _bar_fifths;  ///< key per bar (key changes)
+	int    fifths_at (size_t bar) const;
+	double key_width (int fifths) const;
+	/** width of a key change at the start of a bar (cancelling naturals + new key) */
+	double key_change_width (int from, int to) const;
 
 	double system_height () const;
 	double staff_y (System const&, int staff) const;

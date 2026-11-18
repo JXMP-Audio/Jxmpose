@@ -19,6 +19,7 @@
 
 #include <stdlib.h>
 #include <string>
+#include <vector>
 #include "bundle_env.h"
 #include "pbd/i18n.h"
 
@@ -36,6 +37,7 @@
 
 #include "pbd/file_utils.h"
 #include "pbd/epa.h"
+#include "pbd/search_path.h"
 
 using namespace std;
 using namespace PBD;
@@ -113,9 +115,14 @@ fixup_bundle_environment (int, char* [], string & localedir)
 static std::string ardour_mono_file;
 static std::string ardour_sans_file;
 
+static std::vector<std::string> optional_font_files;
+
 static __cdecl void
 unload_custom_fonts()
 {
+	for (auto const& f : optional_font_files) {
+		RemoveFontResource (f.c_str ());
+	}
 	if (!ardour_mono_file.empty ()) {
 		RemoveFontResource(ardour_mono_file.c_str());
 	}
@@ -142,7 +149,26 @@ load_custom_fonts()
 		cerr << _("Cannot find ArdourSans TrueType font") << endl;
 	}
 
-	if (ardour_mono_file.empty () && ardour_sans_file.empty ()) {
+	/* optional UI fonts (JXMP look) and the music notation font (SMuFL)
+	 * of the score editor; silently skipped when not installed */
+	static const char* const optional_fonts[] = {
+		"Barlow-Medium.ttf",
+		"Barlow-SemiBold.ttf",
+		"Barlow-BoldItalic.ttf",
+		"Leland.otf",
+	};
+	{
+		PBD::Searchpath font_path (ARDOUR::ardour_data_search_path ());
+		font_path.add_subdirectory_to_paths ("fonts");
+		std::string f;
+		for (auto const& name : optional_fonts) {
+			if (PBD::find_file (font_path, name, f)) {
+				optional_font_files.push_back (f);
+			}
+		}
+	}
+
+	if (ardour_mono_file.empty () && ardour_sans_file.empty () && optional_font_files.empty ()) {
 		return;
 	}
 
@@ -159,6 +185,10 @@ load_custom_fonts()
 			cerr << _("Cannot load ArdourSans TrueType font.") << endl;
 		}
 
+		for (auto const& f : optional_font_files) {
+			FcConfigAppFontAddFile (config, reinterpret_cast<const FcChar8*>(f.c_str ()));
+		}
+
 		if (FcFalse == FcConfigSetCurrent(config)) {
 			cerr << _("Failed to set fontconfig configuration.") << endl;
 		}
@@ -171,6 +201,9 @@ load_custom_fonts()
 		if (0 == AddFontResource(ardour_sans_file.c_str())) {
 			ardour_sans_file.clear ();
 			cerr << _("Cannot register ArdourSans TrueType font with windows gdi.") << endl;
+		}
+		for (auto const& f : optional_font_files) {
+			AddFontResource (f.c_str ());
 		}
 		atexit (&unload_custom_fonts);
 		SetUnhandledExceptionFilter (unload_font_at_exception);

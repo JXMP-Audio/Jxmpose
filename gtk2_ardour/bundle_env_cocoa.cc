@@ -208,5 +208,26 @@ void load_custom_fonts()
 			cerr << _("Cannot load ArdourSans TrueType font.") << endl;
 		}
 	}
+
+	/* optional UI fonts (JXMP look) and the music notation font (SMuFL)
+	 * of the score editor; silently skipped when not installed */
+	static const char* const optional_fonts[] = {
+		"Barlow-Medium.ttf",
+		"Barlow-SemiBold.ttf",
+		"Barlow-BoldItalic.ttf",
+		"Leland.otf",
+	};
+	Searchpath font_path (ardour_data_search_path ());
+	font_path.add_subdirectory_to_paths ("fonts");
+	for (auto const& f : optional_fonts) {
+		if (!find_file (font_path, f, font_file)) {
+			continue;
+		}
+		CFStringRef path = CFStringCreateWithBytes (kCFAllocatorDefault, (const UInt8*) font_file.c_str (), font_file.length (), kCFStringEncodingUTF8, FALSE);
+		CFURLRef    url  = CFURLCreateWithFileSystemPath (kCFAllocatorDefault, path, kCFURLPOSIXPathStyle, FALSE);
+		CTFontManagerRegisterFontsForURL (url, kCTFontManagerScopeProcess, NULL);
+		CFRelease (url);
+		CFRelease (path);
+	}
 #endif
 }

@@ -17,6 +17,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <set>
@@ -449,6 +450,63 @@ ScoreView::rebuild ()
 			}
 		}
 
+		/* key changes: a 4-bar window that clearly does not fit the
+		 * current key (more than 15% of its note time outside) and fits
+		 * another one at least twice as well starts a new key */
+		_bar_fifths.assign (n_bars, _fifths);
+		if (!_percussion && !_drum_content && n_bars > 2) {
+			std::vector<std::array<double, 12>> wb (n_bars);
+			for (auto& a : wb) {
+				a.fill (0);
+			}
+			for (auto const& n : model->notes ()) {
+				int64_t const s = _region->source_beats_to_absolute_beats (n->time ()).to_ticks () - origin;
+				if (s < r_start || s >= r_end) {
+					continue;
+				}
+				size_t const b = std::min<size_t> (n_bars - 1, s / _bar_len);
+				wb[b][n->note () % 12] += std::max<int64_t> (grid, n->length ().to_ticks ());
+			}
+			auto win_out = [&] (int f, size_t b0, double& tot) {
+				double out = 0;
+				tot        = 0;
+				for (size_t b = b0; b < std::min (n_bars, b0 + 4); ++b) {
+					for (int pc = 0; pc < 12; ++pc) {
+						tot += wb[b][pc];
+						out += in_major (pc, f) ? 0 : wb[b][pc];
+					}
+				}
+				return out;
+			};
+			int cur = _fifths;
+			for (size_t b = 0; b < n_bars; ++b) {
+				double bar_tot = 0;
+				for (int pc = 0; pc < 12; ++pc) {
+					bar_tot += wb[b][pc];
+				}
+				double tot;
+				double const oc = win_out (cur, b, tot);
+				if (bar_tot > 0 && tot > 0 && oc > 0.15 * tot) {
+					int    best   = cur;
+					double best_o = 1e18;
+					for (int f = -6; f <= 6; ++f) {
+						double t2;
+						double const o = win_out (f, b, t2) + tot * 0.01 * std::abs (f);
+						if (o < best_o) {
+							best_o = o;
+							best   = f;
+						}
+					}
+					double t3;
+					if (best != cur && win_out (best, b, t3) * 2 < oc) {
+						cur = best;
+					}
+				}
+				_bar_fifths[b] = cur;
+			}
+			_fifths = _bar_fifths.front ();
+		}
+
 		/* tuplets: per beat, the grid that fits the note starts (and
 		 * entered note ends) clearly better than the 16th grid */
 		_beat_div[0].clear ();
@@ -629,8 +687,11 @@ ScoreView::rebuild ()
 		bar.onsets.assign (on.begin (), on.end ());
 		bar.onset_x.clear ();
 
+		/* a key change takes room at the bar start */
+		bar.key_x = (b > 0 && fifths_at (b) != fifths_at (b - 1)) ? key_change_width (fifths_at (b - 1), fifths_at (b)) : 0;
+
 		/* spacing: grows with the square root of the duration */
-		double x = 0;
+		double x = bar.key_x;
 		for (size_t k = 0; k < bar.onsets.size (); ++k) {
 			int64_t const next = (k + 1 < bar.onsets.size ()) ? bar.onsets[k + 1] : _bar_len;
 			int64_t const gap  = next - bar.onsets[k];
@@ -641,7 +702,7 @@ ScoreView::rebuild ()
 						continue;
 					}
 					for (auto pi : p.pitches) {
-						accidental |= !in_major (pi % 12, _fifths);
+						accidental |= !in_major (pi % 12, fifths_at (b));
 					}
 				}
 			}
@@ -793,7 +854,7 @@ ScoreView::split_piece (size_t bar_index, int staff, int64_t start, int64_t len,
 				int64_t const units = chunk / u;
 				int64_t n = 1;
 				/* rests are written without dots */
-				for (int64_t c : (dv == 3 ? std::vector<int64_t> { 2, 1 } : (dots ? std::vector<int64_t> { 4, 3, 2, 1 } : std::vector<int64_t> { 4, 2, 1 }))) {
+				for (int64_t c : (dv == 3 ? std::vector<int64_t> { 2, 1 } : (dots ? std::vector<int64_t> { 4, 3, 2, 1 } : std::vector<int64_t> { 2, 1 }))) {
 					if (c <= units) {
 						n = c;
 						break;
@@ -837,10 +898,23 @@ ScoreView::piece_value (Piece const& p, int64_t& base, bool& dotted)
 	note_value (p.len, base, dotted);
 }
 
-double
-ScoreView::key_width () const
+int
+ScoreView::fifths_at (size_t bar) const
 {
-	return std::abs (_fifths) * _sp;
+	return bar < _bar_fifths.size () ? _bar_fifths[bar] : _fifths;
+}
+
+double
+ScoreView::key_width (int fifths) const
+{
+	return std::abs (fifths) * _sp;
+}
+
+double
+ScoreView::key_change_width (int from, int to) const
+{
+	int const cancel = ((from > 0) != (to > 0) || to == 0) ? std::abs (from) : std::max (0, std::abs (from) - std::abs (to));
+	return (cancel + std::abs (to)) * _sp + _sp * 1.2;
 }
 
 double
@@ -878,7 +952,7 @@ ScoreView::layout ()
 		System s;
 		s.first_bar = b;
 		s.y         = y;
-		s.x0        = margin + _sp * 4.5 + key_width () + (_systems.empty () ? _sp * 3 : 0);
+		s.x0        = margin + _sp * 4.5 + key_width (fifths_at (b)) + (_systems.empty () ? _sp * 3 : 0);
 
 		double w = 0;
 		size_t n = 0;
@@ -988,6 +1062,8 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 	double const headw  = glyph_width (cr, NoteheadBlack);
 	double const margin = sp * 2;
 
+	int cur_fifths = _fifths; /* key of the bar being drawn */
+
 	/* staff position: pitch spelling, or the drum map */
 	auto pos = [&] (uint8_t pitch, int& d, int& alt) {
 		if (_percussion) {
@@ -995,7 +1071,30 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 			drum_position (pitch, d, head);
 			alt = 0;
 		} else {
-			spell (pitch, d, alt, _fifths);
+			spell (pitch, d, alt, cur_fifths);
+		}
+	};
+
+	/* key signature (with naturals cancelling the previous one) at x on both staves */
+	auto draw_key = [&] (double x, double top0, double top1, int from, int to) {
+		static const int sharp_d[7] = { 38, 35, 39, 36, 33, 37, 34 };
+		static const int flat_d[7]  = { 34, 37, 33, 36, 32, 35, 31 };
+		int const cancel = ((from > 0) != (to > 0) || to == 0) ? std::abs (from) : std::max (0, std::abs (from) - std::abs (to));
+		int const keep   = std::abs (from) - cancel; /* the cancelled ones are the last of the old key */
+		for (int st = 0; st < 2; ++st) {
+			double const bottom = (st == 0 ? top0 : top1) + 4 * sp;
+			int const    ref    = bottom_line (st);
+			double       xx     = x;
+			for (int i = keep; i < keep + cancel; ++i) {
+				int const d = (from > 0 ? sharp_d[i] : flat_d[i]) - (st == 0 ? 0 : 14);
+				draw_glyph (cr, AccNatural, xx, bottom - (d - ref) * sp / 2.);
+				xx += sp;
+			}
+			for (int i = 0; i < std::abs (to); ++i) {
+				int const d = (to > 0 ? sharp_d[i] : flat_d[i]) - (st == 0 ? 0 : 14);
+				draw_glyph (cr, to > 0 ? AccSharp : AccFlat, xx, bottom - (d - ref) * sp / 2.);
+				xx += sp;
+			}
 		}
 	};
 
@@ -1056,18 +1155,10 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 			draw_glyph (cr, FClef, margin + sp * 0.7, top1 + 1 * sp);
 		}
 
-		/* key signature */
-		if (!_percussion && _fifths) {
-			static const int sharp_d[7] = { 38, 35, 39, 36, 33, 37, 34 };
-			static const int flat_d[7]  = { 34, 37, 33, 36, 32, 35, 31 };
-			for (int st = 0; st < 2; ++st) {
-				double const bottom = (st == 0 ? top0 : top1) + 4 * sp;
-				int const    ref    = bottom_line (st);
-				for (int i = 0; i < std::abs (_fifths); ++i) {
-					int const d = (_fifths > 0 ? sharp_d[i] : flat_d[i]) - (st == 0 ? 0 : 14);
-					draw_glyph (cr, _fifths > 0 ? AccSharp : AccFlat, margin + sp * (3.8 + i), bottom - (d - ref) * sp / 2.);
-				}
-			}
+		/* key signature of the system's first bar */
+		int const sys_key = fifths_at (sys.first_bar);
+		if (!_percussion && sys_key) {
+			draw_key (margin + sp * 3.8, top0, top1, 0, sys_key);
 		}
 
 		/* time signature on the first system */
@@ -1076,12 +1167,12 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 				double const top = st == 0 ? top0 : top1;
 				std::string const n = string_compose ("%1", _beats);
 				std::string const d = string_compose ("%1", _beat_value);
-				double x = margin + sp * 4.6 + key_width ();
+				double x = margin + sp * 4.6 + key_width (sys_key);
 				for (char c : n) {
 					draw_glyph (cr, TimeSig0 + (c - '0'), x, top + sp);
 					x += glyph_width (cr, TimeSig0 + (c - '0'));
 				}
-				x = margin + sp * 4.6 + key_width ();
+				x = margin + sp * 4.6 + key_width (sys_key);
 				for (char c : d) {
 					draw_glyph (cr, TimeSig0 + (c - '0'), x, top + 3 * sp);
 					x += glyph_width (cr, TimeSig0 + (c - '0'));
@@ -1100,6 +1191,18 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 		for (size_t bi = 0; bi < sys.n_bars; ++bi) {
 			Bar const& bar (_bars[sys.first_bar + bi]);
 			double const bw = bar.width * sys.stretch;
+
+			cur_fifths = fifths_at (sys.first_bar + bi);
+			if (bar.key_x > 0 && !_percussion) {
+				/* key change: after a thin double bar line (the system start already shows the key) */
+				if (bi > 0) {
+					cr->set_line_width (line_w * 1.2);
+					cr->move_to (bx - sp * 0.4, top0);
+					cr->line_to (bx - sp * 0.4, top1 + 4 * sp);
+					cr->stroke ();
+					draw_key (bx + sp * 0.6, top0, top1, fifths_at (sys.first_bar + bi - 1), cur_fifths);
+				}
+			}
 
 			auto onset_x = [&] (int64_t start) {
 				size_t k = std::lower_bound (bar.onsets.begin (), bar.onsets.end (), start) - bar.onsets.begin ();
@@ -1288,13 +1391,13 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 						uint8_t pitch = 0;
 						for (auto pi : p.pitches) {
 							int dd, aa;
-							spell (pi, dd, aa, _fifths);
+							spell (pi, dd, aa, cur_fifths);
 							if (dd == d && aa == alt) {
 								pitch = pi;
 							}
 						}
 						bool const tied_in = pending_tie[st].count (pitch) > 0;
-						int const cur = altered.count (d) ? altered[d] : key_alter (((d % 7) + 7) % 7, _fifths);
+						int const cur = altered.count (d) ? altered[d] : key_alter (((d % 7) + 7) % 7, cur_fifths);
 						altered[d] = alt;
 						if (tied_in || cur == alt) {
 							continue;
@@ -1631,7 +1734,7 @@ ScoreView::pitch_at (double x, double y, size_t& bar_index, uint8_t& pitch) cons
 	static const int semis[7] = { 0, 2, 4, 5, 7, 9, 11 };
 	int const octave = (int) floor (d / 7.);
 	int const letter = d - octave * 7;
-	int const p      = (octave + 1) * 12 + semis[letter] + key_alter (letter, _fifths);
+	int const p      = (octave + 1) * 12 + semis[letter] + key_alter (letter, fifths_at (bar_index));
 	if (p < 0 || p > 127) {
 		return false;
 	}
@@ -1878,7 +1981,7 @@ ScoreView::position_of (int64_t tick, uint8_t pitch, double& x, double& y) const
 		drum_position (pitch, d, head);
 		st = 0;
 	} else {
-		spell (pitch, d, alt, _fifths);
+		spell (pitch, d, alt, fifths_at (b));
 		st = pitch >= 60 ? 0 : 1;
 	}
 	int const ref = _percussion ? bottom_line (0) : bottom_line (st);
