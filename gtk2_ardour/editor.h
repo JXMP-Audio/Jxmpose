@@ -127,6 +127,7 @@ class EditorSources;
 class EditorRoutes;
 class EditorRouteGroups;
 class EditorSnapshots;
+class MasterMeterPanel;
 class EditorSummary;
 class EditorVSummary;
 class GUIObjectState;
@@ -1878,6 +1879,7 @@ private:
 	EditorSections*    _sections;
 	EditorSources*     _sources;
 	EditorSnapshots*   _snapshots;
+	MasterMeterPanel*  _master_meter_panel;
 	EditorLocations*   _locations;
 
 	/* diskstream/route display management */

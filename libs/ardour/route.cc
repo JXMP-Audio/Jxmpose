@@ -49,6 +49,7 @@
 #include "pbd/unwind.h"
 
 #include "ardour/amp.h"
+#include "ardour/lufs_meter.h"
 #include "ardour/audio_buffer.h"
 #include "ardour/audio_track.h"
 #include "ardour/audio_port.h"
@@ -147,6 +148,7 @@ Route::Route (Session& sess, string name, PresentationInfo::Flag flag, DataType 
 	, _patch_selector_dialog (0)
 {
 	processor_max_streams.reset();
+	_loudness_rolling = false;
 
 	_pending_process_reorder.store (0);
 	_pending_listen_change.store (0);
@@ -287,6 +289,8 @@ Route::init ()
 		_volume.reset (new Amp (_session, X_("LAN Amp"), _volume_control, false));
 		_volume->set_display_to_user (false);
 		_volume->deactivate ();
+		/* loudness metering of the master output (dual mono for a mono master) */
+		_loudness_meter.reset (new LUFSMeter (_session.nominal_sample_rate (), 2));
 	}
 	_main_outs->activate ();
 
@@ -603,6 +607,20 @@ Route::process_output_buffers (BufferSet& bufs,
 			latency += _delayline->delay ();
 		}
 #endif
+	}
+
+	if (_loudness_meter && bufs.count ().n_audio () > 0) {
+		/* integrated values restart whenever playback starts */
+		if (_loudness_rolling && start_sample == end_sample) {
+			_loudness_rolling = false;
+		} else if (!_loudness_rolling && start_sample != end_sample) {
+			_loudness_rolling = true;
+			_loudness_meter->reset ();
+		}
+		float const* data[2];
+		data[0] = bufs.get_audio (0).data ();
+		data[1] = bufs.get_audio (bufs.count ().n_audio () > 1 ? 1 : 0).data ();
+		_loudness_meter->run (data, nframes);
 	}
 }
 

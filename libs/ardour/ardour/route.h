@@ -79,6 +79,7 @@ class Delivery;
 class DiskReader;
 class DiskWriter;
 class IOProcessor;
+class LUFSMeter;
 class Panner;
 class PannerShell;
 class PolarityProcessor;
@@ -285,6 +286,8 @@ public:
 	std::shared_ptr<InternalSend>     monitor_send() const { return _monitor_send; }
 	/** the signal processorat at end of the processing chain which produces output */
 	std::shared_ptr<Delivery>         main_outs() const { return _main_outs; }
+	/** EBU R128 loudness meter of the final output (master bus only, else nullptr) */
+	LUFSMeter*                        loudness_meter () const { return _loudness_meter.get (); }
 	std::shared_ptr<InternalReturn>   internal_return() const { return _intreturn; }
 	std::shared_ptr<MonitorProcessor> monitor_control() const { return _monitor_control; }
 	std::shared_ptr<Send>             internal_send_for (std::shared_ptr<const Route> target) const;
@@ -632,6 +635,8 @@ protected:
 	std::shared_ptr<IO>               _output;
 
 	std::shared_ptr<Delivery>         _main_outs;
+	std::unique_ptr<LUFSMeter>        _loudness_meter;
+	bool                              _loudness_rolling;
 	std::shared_ptr<InternalSend>     _monitor_send;
 	std::shared_ptr<InternalReturn>   _intreturn;
 	std::shared_ptr<MonitorProcessor> _monitor_control;

@@ -125,6 +125,7 @@
 #include "editor_section_box.h"
 #include "editor_sections.h"
 #include "editor_snapshots.h"
+#include "master_meter_panel.h"
 #include "editor_sources.h"
 #include "editor_summary.h"
 #include "editor_vsummary.h"
@@ -345,6 +346,7 @@ Editor::Editor ()
 	, _regions (nullptr)
 	, _sections (nullptr)
 	, _snapshots (nullptr)
+	, _master_meter_panel (nullptr)
 	, _locations (nullptr)
 	, show_gain_after_trim (false)
 	, _no_not_select_reimported_tracks (false)
@@ -693,6 +695,10 @@ Editor::Editor ()
 	add_notebook_page (_("Snaps"), _("Snapshots"), _snapshots->widget ());
 	add_notebook_page (_("Groups"), _("Track & Bus Groups"), _route_groups->widget ());
 	add_notebook_page (_("Marks"), _("Ranges & Marks"), _locations->widget ());
+	if (CairoTheme::studio_widgets ()) {
+		_master_meter_panel = manage (new MasterMeterPanel);
+		add_notebook_page (_("Meter"), _("Master Meter"), *_master_meter_panel);
+	}
 
 	/* Don't want to create adjustments for this, and C++ API doesn't allow
 	 * a ScrolledWindow without specified adjustments (unlike the C
@@ -1302,6 +1308,9 @@ Editor::set_session (Session *t)
 	_regions->set_session (_session);
 	_sources->set_session (_session);
 	_snapshots->set_session (_session);
+	if (_master_meter_panel) {
+		_master_meter_panel->set_session (_session);
+	}
 	_sections->set_session (_session);
 	_routes->set_session (_session);
 	_locations->set_session (_session);
