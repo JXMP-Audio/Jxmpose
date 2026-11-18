@@ -222,6 +222,18 @@ MasterMeterPanel::MasterMeterPanel ()
 	show_all ();
 	_target_dd.set_no_show_all ();
 	set_mode (0);
+
+	/* the target can also be changed in Preferences > Metering */
+	UIConfiguration::instance ().ParameterChanged.connect (sigc::mem_fun (*this, &MasterMeterPanel::parameter_changed));
+}
+
+void
+MasterMeterPanel::parameter_changed (std::string const& p)
+{
+	if (p == "master-meter-loudness-target") {
+		update_target_label ();
+		_display.queue_draw ();
+	}
 }
 
 MasterMeterPanel::~MasterMeterPanel ()

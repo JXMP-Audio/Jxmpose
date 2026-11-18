@@ -5078,6 +5078,19 @@ These settings will only take effect after %1 is restarted.\n\
 
 	add_option (S_("Preferences|Metering"), mpks);
 
+	HSliderOption *mlt = new HSliderOption("master-meter-loudness-target",
+			_("Master meter loudness target [LUFS]"),
+			sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::get_master_meter_loudness_target),
+			sigc::mem_fun (UIConfiguration::instance(), &UIConfiguration::set_master_meter_loudness_target),
+			-40, 0, .5, 1
+			);
+
+	Gtkmm2ext::UI::instance()->set_tip (
+			mlt->tip_widget(),
+			_("Integrated loudness target shown as the orange line in the editor's master meter (Loudness view). Common values: -14 (streaming), -16 (Apple Music, podcasts), -23 (EBU R128 broadcast)."));
+
+	add_option (S_("Preferences|Metering"), mlt);
+
 	OptionEditorHeading* default_meter_head = new OptionEditorHeading (_("Default Meter Types"));
 	default_meter_head->set_note (_("These settings apply to newly created tracks and busses. For the Master bus, this will be when a new session is created."));
 

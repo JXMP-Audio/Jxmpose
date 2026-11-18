@@ -66,6 +66,7 @@ private:
 	void set_target (float);
 	void custom_target ();
 	void update_target_label ();
+	void parameter_changed (std::string const&);
 	void reset ();
 	void update ();
 
