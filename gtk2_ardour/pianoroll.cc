@@ -1991,9 +1991,9 @@ Pianoroll::update_drum_rows ()
 		return;
 	}
 
-	/* drum map: the notes that the regions use; with "all drums" also
-	 * every named drum sound of the instrument (or the General MIDI
-	 * percussion map). An empty pattern starts with a basic kit. */
+	/* drum map: the notes that the regions use plus a basic kit; with
+	 * "all drums" every named drum sound of the instrument (or the
+	 * General MIDI percussion map). */
 	std::set<uint8_t> notes;
 	for (auto & [region,view] : region_view_map) {
 		std::shared_ptr<ARDOUR::MidiRegion> mr (std::dynamic_pointer_cast<ARDOUR::MidiRegion> (region));
@@ -2022,8 +2022,9 @@ Pianoroll::update_drum_rows ()
 			}
 		}
 		notes.insert (named.begin (), named.end ());
-	} else if (notes.empty ()) {
-		/* kick, side stick, snare, clap, toms, hi-hats, crash, ride */
+	} else {
+		/* always offer a basic kit to write into:
+		 * kick, side stick, snare, clap, toms, hi-hats, crash, ride */
 		for (uint8_t n : { 36, 37, 38, 39, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51 }) {
 			notes.insert (n);
 		}
