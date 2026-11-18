@@ -95,6 +95,7 @@ public:
 	void drop_all ();
 
 	Gdk::Cursor* make_cursor (const char* name, int hotspot_x = 0, int hotspot_y = 0);
+	Gdk::Cursor* make_pencil_cursor ();
 	static Gdk::Cursor* _invalid;
 	static void create_invalid ();
 };

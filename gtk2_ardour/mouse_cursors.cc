@@ -22,7 +22,11 @@
 
 #include "gtkmm2ext/cursors.h"
 
+#include <cairo.h>
+#include <cmath>
+
 #include "utils.h"
+#include "ui_config.h"
 #include "mouse_cursors.h"
 #include "editor_xpms"
 
@@ -120,6 +124,89 @@ MouseCursors::drop_all ()
 	delete expand_up_down; expand_up_down = 0;
 }
 
+/* Pencil with the tip at the top-left hot-spot and the body running down to
+ * the bottom-right (the X11 stock pencil points the other way). */
+Gdk::Cursor*
+MouseCursors::make_pencil_cursor ()
+{
+	float const scale = std::max (1.f, UIConfiguration::instance ().get_ui_scale ());
+	int const   sz    = (int) rint (24 * scale);
+
+	cairo_surface_t* surf = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, sz, sz);
+	cairo_t*         cr   = cairo_create (surf);
+	cairo_scale (cr, sz / 24.0, sz / 24.0);
+
+	/* local frame: x along the pencil from the tip (0,0), y across it */
+	cairo_translate (cr, 1, 1);
+	cairo_rotate (cr, M_PI / 4.0);
+
+	double const len = 28.0; // tip .. end (diagonal of the 24px box)
+	double const hw  = 3.0;  // half width
+	double const cone = 7.0;
+
+	cairo_set_line_join (cr, CAIRO_LINE_JOIN_ROUND);
+	cairo_set_line_width (cr, 1.0);
+
+	/* body */
+	cairo_rectangle (cr, cone, -hw, len - cone - 4.5, 2 * hw);
+	cairo_set_source_rgb (cr, 0.95, 0.72, 0.20);
+	cairo_fill_preserve (cr);
+	cairo_set_source_rgb (cr, 0, 0, 0);
+	cairo_stroke (cr);
+	/* eraser */
+	cairo_rectangle (cr, len - 4.5, -hw, 4.0, 2 * hw);
+	cairo_set_source_rgb (cr, 0.90, 0.50, 0.55);
+	cairo_fill_preserve (cr);
+	cairo_set_source_rgb (cr, 0, 0, 0);
+	cairo_stroke (cr);
+	/* wooden cone */
+	cairo_move_to (cr, 0, 0);
+	cairo_line_to (cr, cone, -hw);
+	cairo_line_to (cr, cone, hw);
+	cairo_close_path (cr);
+	cairo_set_source_rgb (cr, 0.96, 0.87, 0.70);
+	cairo_fill_preserve (cr);
+	cairo_set_source_rgb (cr, 0, 0, 0);
+	cairo_stroke (cr);
+	/* graphite tip */
+	cairo_move_to (cr, 0, 0);
+	cairo_line_to (cr, 2.6, -1.1);
+	cairo_line_to (cr, 2.6, 1.1);
+	cairo_close_path (cr);
+	cairo_set_source_rgb (cr, 0.1, 0.1, 0.1);
+	cairo_fill (cr);
+
+	cairo_destroy (cr);
+	cairo_surface_flush (surf);
+
+	/* premultiplied ARGB32 -> RGBA pixbuf */
+	Glib::RefPtr<Gdk::Pixbuf> pb = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, true, 8, sz, sz);
+	unsigned char const* src    = cairo_image_surface_get_data (surf);
+	int const            stride = cairo_image_surface_get_stride (surf);
+	for (int y = 0; y < sz; ++y) {
+		uint32_t const* row = (uint32_t const*) (src + y * stride);
+		guint8*         dst = pb->get_pixels () + y * pb->get_rowstride ();
+		for (int x = 0; x < sz; ++x) {
+			uint32_t const px = row[x];
+			unsigned const a  = px >> 24;
+			unsigned r = (px >> 16) & 0xff, g = (px >> 8) & 0xff, b = px & 0xff;
+			if (a > 0 && a < 255) {
+				r = r * 255 / a;
+				g = g * 255 / a;
+				b = b * 255 / a;
+			}
+			dst[4 * x + 0] = r;
+			dst[4 * x + 1] = g;
+			dst[4 * x + 2] = b;
+			dst[4 * x + 3] = a;
+		}
+	}
+	cairo_surface_destroy (surf);
+
+	int const hot = (int) rint (1 * sz / 24.0);
+	return new Gdk::Cursor (Gdk::Display::get_default (), pb, hot, hot);
+}
+
 Gdk::Cursor*
 MouseCursors::make_cursor (const char* name, int hotspot_x, int hotspot_y)
 {
@@ -212,7 +299,7 @@ MouseCursors::set_cursor_set (const std::string& name)
 	cursors.push_back (wait);
 	timebar = new Cursor(LEFT_PTR);
 	cursors.push_back (timebar);
-	midi_pencil = new Cursor (PENCIL);
+	midi_pencil = make_pencil_cursor ();
 	cursors.push_back (midi_pencil);
 	midi_select = new Cursor (CENTER_PTR);
 	cursors.push_back (midi_select);
