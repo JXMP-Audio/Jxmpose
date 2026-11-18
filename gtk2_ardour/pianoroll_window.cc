@@ -44,6 +44,7 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	, drum_button (_("Drum Editor"))
 	, score_button (_("Score Editor"))
 	, all_drums_button (_("All Drums"))
+	, drum_notation_button (_("Drum Notation"))
 {
 	pianoroll->set_session (&s);
 	set_default_size (1270, 700);
@@ -67,7 +68,7 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 		mode_bar.pack_start (*m.b, false, false);
 	}
 	/* drum view: used sounds only, or the whole drum map */
-	all_drums_button.set_name ("generic button");
+	all_drums_button.set_name ("tab button");
 	all_drums_button.set_corner_radius (2);
 	ArdourWidgets::set_tooltip (all_drums_button, _("Show every drum sound of the instrument, not only the ones used in this pattern"));
 	all_drums_button.signal_clicked.connect ([this] () {
@@ -76,6 +77,17 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 		pianoroll->set_show_all_drums (yn);
 	});
 	mode_bar.pack_end (all_drums_button, false, false);
+
+	/* score: pitched grand staff or drum notation */
+	drum_notation_button.set_name ("tab button");
+	drum_notation_button.set_corner_radius (2);
+	ArdourWidgets::set_tooltip (drum_notation_button, _("Write the region as drum notation (one staff, kick and pedal hi-hat stems down, cymbals with x note heads)"));
+	drum_notation_button.signal_clicked.connect ([this] () {
+		bool const yn = !drum_notation_button.get_active ();
+		drum_notation_button.set_active (yn);
+		score_view.set_percussion (yn);
+	});
+	mode_bar.pack_end (drum_notation_button, false, false);
 	mode_bar.set_spacing (2);
 	mode_bar.set_border_width (3);
 
@@ -96,6 +108,8 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	hpacker.set_no_show_all ();
 	all_drums_button.set_no_show_all ();
 	all_drums_button.hide ();
+	drum_notation_button.set_no_show_all ();
+	drum_notation_button.hide ();
 	key_button.set_active (true);
 }
 
@@ -110,6 +124,15 @@ PianorollWindow::set_editor_mode (EditorMode m)
 		all_drums_button.show ();
 	} else {
 		all_drums_button.hide ();
+	}
+	if (m == ScoreEditor) {
+		/* drums (drum view or MIDI channel 10) start as drum notation */
+		bool const drums = pianoroll->note_mode () == ARDOUR::Percussive || pianoroll->visible_channel () == 9;
+		drum_notation_button.set_active (drums);
+		score_view.set_percussion (drums);
+		drum_notation_button.show ();
+	} else {
+		drum_notation_button.hide ();
 	}
 
 	if (m == ScoreEditor) {

@@ -46,6 +46,10 @@ enum : uint32_t {
 	Brace          = 0xE000,
 	GClef          = 0xE050,
 	FClef          = 0xE062,
+	PercClef       = 0xE069,
+	NoteheadX      = 0xE0A9,
+	NoteheadCircleX = 0xE0B3,
+	NoteheadTriangle = 0xE0BE,
 	TimeSig0       = 0xE080,
 	NoteheadWhole  = 0xE0A2,
 	NoteheadHalf   = 0xE0A3,
@@ -96,6 +100,38 @@ spell (uint8_t pitch, int& diatonic, int& alter)
 	int const octave = pitch / 12 - 1;
 	diatonic = octave * 7 + letter[pitch % 12];
 	alter    = acc[pitch % 12];
+}
+
+/** drum staff position (diatonic step, treble positions) and note head */
+void
+drum_position (uint8_t pitch, int& d, uint32_t& head)
+{
+	head = NoteheadBlack;
+	switch (pitch) {
+	case 35: case 36: d = 31; break;                         /* kick: F4 */
+	case 37: d = 35; head = NoteheadX; break;                /* side stick */
+	case 38: case 40: d = 35; break;                         /* snare: C5 */
+	case 39: d = 35; head = NoteheadX; break;                /* clap */
+	case 41: d = 32; break;                                  /* floor toms */
+	case 43: d = 33; break;
+	case 45: d = 34; break;                                  /* toms */
+	case 47: case 48: d = 36; break;
+	case 50: d = 37; break;
+	case 42: d = 39; head = NoteheadX; break;                /* closed hi-hat: G5 */
+	case 46: d = 39; head = NoteheadCircleX; break;          /* open hi-hat */
+	case 44: d = 29; head = NoteheadX; break;                /* pedal hi-hat: D4 */
+	case 49: case 52: case 55: case 57: d = 40; head = NoteheadX; break; /* crashes: A5 */
+	case 51: case 53: case 59: d = 38; head = NoteheadX; break;          /* rides: F5 */
+	case 56: d = 37; head = NoteheadTriangle; break;         /* cowbell */
+	case 54: d = 37; head = NoteheadX; break;                /* tambourine */
+	default: d = 37; break;
+	}
+}
+
+bool
+is_foot (uint8_t pitch)
+{
+	return pitch == 35 || pitch == 36 || pitch == 44;
 }
 
 /* diatonic step of the bottom staff line: E4 (treble), G2 (bass) */
@@ -161,6 +197,7 @@ note_value (int64_t len, int64_t& base, bool& dotted)
 
 ScoreView::ScoreView ()
 	: _sp (9. * UIConfiguration::instance ().get_ui_scale ())
+	, _percussion (false)
 	, _bar_len (whole)
 	, _beats (4)
 	, _beat_value (4)
@@ -195,6 +232,15 @@ ScoreView::set_staff_space (double sp)
 {
 	_sp = std::max (4., std::min (30., sp));
 	rebuild ();
+}
+
+void
+ScoreView::set_percussion (bool yn)
+{
+	if (_percussion != yn) {
+		_percussion = yn;
+		rebuild ();
+	}
 }
 
 void
@@ -259,7 +305,8 @@ ScoreView::rebuild ()
 				e = s + grid;
 			}
 
-			int const staff = n->note () >= 60 ? 0 : 1;
+			/* staff, or voice in drum notation (0: hands, 1: feet) */
+			int const staff = _percussion ? (is_foot (n->note ()) ? 1 : 0) : (n->note () >= 60 ? 0 : 1);
 
 			/* split at bar lines, tied */
 			while (s < e) {
@@ -416,6 +463,9 @@ ScoreView::build_bar_pieces (Bar& bar, int staff, std::vector<Seg> const& in)
 double
 ScoreView::system_height () const
 {
+	if (_percussion) {
+		return _sp * (6 + 4 + 6);
+	}
 	/* treble + gap + bass, with room for ledger lines */
 	return _sp * (6 + 4 + 7 + 4 + 6);
 }
@@ -423,6 +473,9 @@ ScoreView::system_height () const
 double
 ScoreView::staff_y (System const& s, int staff) const
 {
+	if (_percussion) {
+		return s.y + _sp * 6;
+	}
 	return s.y + _sp * 6 + (staff == 0 ? 0 : _sp * 11);
 }
 
@@ -543,6 +596,17 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 	double const headw  = glyph_width (cr, NoteheadBlack);
 	double const margin = sp * 2;
 
+	/* staff position: pitch spelling, or the drum map */
+	auto pos = [&] (uint8_t pitch, int& d, int& alt) {
+		if (_percussion) {
+			uint32_t head;
+			drum_position (pitch, d, head);
+			alt = 0;
+		} else {
+			spell (pitch, d, alt);
+		}
+	};
+
 	struct Pending { double x, y; size_t system; bool below; };
 	std::map<uint8_t, Pending> pending_tie[2];
 
@@ -569,7 +633,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 
 		/* staff lines */
 		cr->set_line_width (line_w);
-		for (int st = 0; st < 2; ++st) {
+		for (int st = 0; st < (_percussion ? 1 : 2); ++st) {
 			double const top = st == 0 ? top0 : top1;
 			for (int l = 0; l < 5; ++l) {
 				cr->move_to (margin, top + l * sp);
@@ -583,7 +647,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 		cr->move_to (margin, top0);
 		cr->line_to (margin, top1 + 4 * sp);
 		cr->stroke ();
-		{
+		if (!_percussion) {
 			double const span = top1 + 4 * sp - top0;
 			cr->save ();
 			cr->translate (margin - sp * 1.6, top1 + 4 * sp);
@@ -593,12 +657,16 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 		}
 
 		/* clefs */
-		draw_glyph (cr, GClef, margin + sp * 0.7, top0 + 3 * sp);
-		draw_glyph (cr, FClef, margin + sp * 0.7, top1 + 1 * sp);
+		if (_percussion) {
+			draw_glyph (cr, PercClef, margin + sp * 1.2, top0 + 2 * sp);
+		} else {
+			draw_glyph (cr, GClef, margin + sp * 0.7, top0 + 3 * sp);
+			draw_glyph (cr, FClef, margin + sp * 0.7, top1 + 1 * sp);
+		}
 
 		/* time signature on the first system */
 		if (si == 0) {
-			for (int st = 0; st < 2; ++st) {
+			for (int st = 0; st < (_percussion ? 1 : 2); ++st) {
 				double const top = st == 0 ? top0 : top1;
 				std::string const n = string_compose ("%1", _beats);
 				std::string const d = string_compose ("%1", _beat_value);
@@ -635,7 +703,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 
 			for (int st = 0; st < 2; ++st) {
 				double const top    = st == 0 ? top0 : top1;
-				int const    ref    = bottom_line (st);
+				int const    ref    = _percussion ? bottom_line (0) : bottom_line (st);
 				double const bottom = top + 4 * sp;
 				double const middle = top + 2 * sp;
 				auto y_of = [&] (int d) { return bottom - (d - ref) * sp / 2.; };
@@ -687,12 +755,12 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 						}
 						for (auto pi : pieces[m].pitches) {
 							int d, alt;
-							spell (pi, d, alt);
+							pos (pi, d, alt);
 							dmin = std::min (dmin, d);
 							dmax = std::max (dmax, d);
 						}
 					}
-					bool const up = (dmin + dmax) / 2. < ref + 4;
+					bool const up = _percussion ? (st == 0) : ((dmin + dmax) / 2. < ref + 4);
 					group_up[group[k]] = up;
 					group_y[group[k]]  = up ? std::min (y_of (dmax) - 3.25 * sp, middle) : std::max (y_of (dmin) + 3.25 * sp, middle);
 				}
@@ -710,9 +778,21 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 
 					if (p.pitches.empty ()) {
 						/* rest */
+						if (_percussion && st == 1) {
+							/* the feet voice only shows rests in bars where it plays */
+							bool plays = false;
+							for (auto const& q : pieces) {
+								plays |= !q.pitches.empty ();
+							}
+							if (!plays) {
+								continue;
+							}
+						}
+						/* two voices on one staff: rests move out of the way */
+						double const voice_dy = _percussion ? (st == 0 ? -sp : 2 * sp) : 0;
 						if (p.len == _bar_len) {
 							double const w = glyph_width (cr, RestWhole);
-							draw_glyph (cr, RestWhole, bx + (bw - w) / 2, top + sp);
+							draw_glyph (cr, RestWhole, bx + (bw - w) / 2, top + sp + (st == 1 ? voice_dy : 0));
 							continue;
 						}
 						uint32_t g = Rest16th;
@@ -725,27 +805,27 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 						} else if (base >= eighth) {
 							g = Rest8th;
 						}
-						double const ry = (g == RestWhole) ? top + sp : middle;
+						double const ry = ((g == RestWhole) ? top + sp : middle) + voice_dy;
 						draw_glyph (cr, g, x, ry);
 						if (dotted) {
-							draw_glyph (cr, AugDot, x + glyph_width (cr, g) + sp * 0.3, middle - sp / 2);
+							draw_glyph (cr, AugDot, x + glyph_width (cr, g) + sp * 0.3, middle - sp / 2 + voice_dy);
 						}
 						continue;
 					}
 
 					/* chord */
-					std::vector<std::pair<int, int>> ds; /* diatonic, alteration */
+					std::vector<std::pair<int, int>> ds; /* diatonic, alteration (drums: pitch) */
 					for (auto pi : p.pitches) {
 						int d, alt;
-						spell (pi, d, alt);
-						ds.push_back (std::make_pair (d, alt));
+						pos (pi, d, alt);
+						ds.push_back (std::make_pair (d, _percussion ? (int) pi : alt));
 					}
 					std::sort (ds.begin (), ds.end ());
 					int const dmin = ds.front ().first;
 					int const dmax = ds.back ().first;
 
 					bool const beamed = group[k] >= 0;
-					bool const up     = beamed ? group_up[group[k]] : ((dmin + dmax) / 2. < ref + 4);
+					bool const up     = beamed ? group_up[group[k]] : (_percussion ? (st == 0) : ((dmin + dmax) / 2. < ref + 4));
 
 					/* seconds: displace every other head to the other side of the stem */
 					std::vector<double> head_dx (ds.size (), 0);
@@ -783,7 +863,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 					/* accidentals (not on tied continuation notes) */
 					double acc_x = x - sp * 0.3 + (up ? 0 : (any_displaced ? -(headw - stem_w) : 0));
 					int last_acc_d = 1000;
-					for (size_t m = ds.size (); m-- > 0;) {
+					for (size_t m = (_percussion ? 0 : ds.size ()); m-- > 0;) {
 						int const d   = ds[m].first;
 						int const alt = ds[m].second;
 						uint8_t pitch = 0;
@@ -812,7 +892,15 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 					/* note heads */
 					uint32_t const head = base >= whole ? NoteheadWhole : (base >= half ? NoteheadHalf : NoteheadBlack);
 					for (size_t m = 0; m < ds.size (); ++m) {
-						draw_glyph (cr, head, x + head_dx[m], y_of (ds[m].first));
+						uint32_t h = head;
+						if (_percussion) {
+							int dd;
+							drum_position (ds[m].second, dd, h);
+							if (h == NoteheadBlack) {
+								h = head;
+							}
+						}
+						draw_glyph (cr, h, x + head_dx[m], y_of (ds[m].first));
 					}
 
 					/* dots */
@@ -852,7 +940,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 					for (size_t m = 0; m < p.pitches.size (); ++m) {
 						uint8_t const pitch = p.pitches[m];
 						int d, alt;
-						spell (pitch, d, alt);
+						pos (pitch, d, alt);
 						auto pt = pending_tie[st].find (pitch);
 						if (pt != pending_tie[st].end ()) {
 							if (pt->second.system == si) {

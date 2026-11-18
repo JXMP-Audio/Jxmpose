@@ -48,6 +48,11 @@ public:
 
 	void set_region (std::shared_ptr<ARDOUR::MidiRegion>);
 
+	/** drum notation: one staff, percussion clef, hands stems up, feet
+	 * (kick, pedal hi-hat) stems down, cymbals with x note heads */
+	void set_percussion (bool);
+	bool percussion () const { return _percussion; }
+
 	/** staff space in pixels (zoom) */
 	void set_staff_space (double);
 	double staff_space () const { return _sp; }
@@ -86,6 +91,7 @@ private:
 	PBD::ScopedConnectionList           _connections;
 
 	double  _sp;          ///< staff space (px)
+	bool    _percussion;
 	int64_t _bar_len;     ///< ticks per bar
 	int     _beats;       ///< time signature
 	int     _beat_value;
