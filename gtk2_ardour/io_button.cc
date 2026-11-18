@@ -421,6 +421,45 @@ IOButtonBase::set_label (IOButtonBase& self, ARDOUR::Session& session, std::shar
 		}
 	}
 
+	/* Several tracks feed (or are fed by) this IO, e.g. two MIDI tracks
+	 * playing one instrument: name the first and count the others */
+	if (!have_label) {
+		std::string first;
+		int         n_routes = 0;
+		bool        others   = false;
+		std::shared_ptr<PortSet> ps (io->ports ());
+		std::shared_ptr<ARDOUR::RouteList const> routes = session.get_routes ();
+		for (auto const& route : *routes) {
+			std::shared_ptr<IO> other_io = input ? route->output () : route->input ();
+			if (other_io && other_io != io && io->connected_to (other_io)) {
+				if (first.empty ()) {
+					first = route->name ();
+				}
+				++n_routes;
+			}
+		}
+		/* only when every connection belongs to one of those routes */
+		for (PortSet::iterator port = ps->begin (dt); port != ps->end (dt) && n_routes > 0; ++port) {
+			port_connections.clear ();
+			port->get_connections (port_connections);
+			for (auto const& c : port_connections) {
+				bool mine = false;
+				for (auto const& route : *routes) {
+					std::shared_ptr<IO> other_io = input ? route->output () : route->input ();
+					if (other_io && other_io->has_port (session.engine ().get_port_by_name (c))) {
+						mine = true;
+						break;
+					}
+				}
+				others |= !mine;
+			}
+		}
+		if (n_routes > 1 && !others) {
+			label << Gtkmm2ext::markup_escape_text (first) << " +" << (n_routes - 1);
+			have_label = true;
+		}
+	}
+
 	/* Odd configuration */
 	if (!have_label) {
 		label << "*" << total_connection_count << "*";

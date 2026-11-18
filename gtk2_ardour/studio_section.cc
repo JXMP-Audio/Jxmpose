@@ -23,10 +23,11 @@
 
 using namespace ArdourWidgets;
 
-StudioSection::StudioSection (std::string const& title, std::string const& key, bool expand)
+StudioSection::StudioSection (std::string const& title, std::string const& key, bool expand, bool default_open)
 	: _title (title)
 	, _key (key)
 	, _expand (expand)
+	, _default_open (default_open)
 {
 	_header.set_name ("generic button");
 	_header.set_alignment (0.0, 0.5);
@@ -46,6 +47,13 @@ void
 StudioSection::add_item (Gtk::Widget& w, bool expand)
 {
 	_content.pack_start (w, expand, expand);
+}
+
+void
+StudioSection::show_all_vfunc ()
+{
+	Gtk::VBox::show_all_vfunc ();
+	apply (_key);
 }
 
 void
@@ -85,8 +93,11 @@ StudioSection::state ()
 		loaded = true;
 		std::stringstream ss (UIConfiguration::instance ().get_studio_closed_sections ());
 		std::string k;
+		/* "key" = closed, "+key" = opened (for sections that start closed) */
 		while (std::getline (ss, k, ',')) {
-			if (!k.empty ()) {
+			if (k.size () > 1 && k[0] == '+') {
+				s[k.substr (1)] = true;
+			} else if (!k.empty ()) {
 				s[k] = false;
 			}
 		}
@@ -99,9 +110,7 @@ StudioSection::save_state ()
 {
 	std::string closed;
 	for (auto const& i : state ()) {
-		if (!i.second) {
-			closed += (closed.empty () ? "" : ",") + i.first;
-		}
+		closed += std::string (closed.empty () ? "" : ",") + (i.second ? "+" : "") + i.first;
 	}
 	UIConfiguration::instance ().set_studio_closed_sections (closed);
 }
@@ -117,5 +126,5 @@ bool
 StudioSection::is_open () const
 {
 	std::map<std::string, bool>::const_iterator i = state ().find (_key);
-	return i == state ().end () ? true : i->second;
+	return i == state ().end () ? _default_open : i->second;
 }

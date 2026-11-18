@@ -32,13 +32,17 @@
 class StudioSection : public Gtk::VBox
 {
 public:
-	StudioSection (std::string const& title, std::string const& key, bool expand);
+	StudioSection (std::string const& title, std::string const& key, bool expand, bool default_open = true);
 
 	void add_item (Gtk::Widget& w, bool expand = false);
 	void toggle ();
 	bool is_open () const;
 	/* re-apply open/closed state, call once the section is packed */
 	void refresh () { apply (_key); }
+
+protected:
+	/* show_all () must not open a closed section */
+	void show_all_vfunc ();
 
 private:
 	void apply (std::string const& key);
@@ -52,4 +56,5 @@ private:
 	std::string                 _title;
 	std::string                 _key;
 	bool                        _expand;
+	bool                        _default_open;
 };

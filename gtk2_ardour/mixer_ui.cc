@@ -3298,7 +3298,7 @@ Mixer_UI::setup_studio_sidebar ()
 	list_vpacker.remove (_mixer_scene_spacer);
 	list_vpacker.remove (_mixer_scene_frame);
 	_mixer_scene_frame.remove ();
-	StudioSection* scenes = manage (new StudioSection (_("Mixer Scenes  (F1..F8)"), X_("mixer-scenes"), false));
+	StudioSection* scenes = manage (new StudioSection (_("Mixer Scenes  (F1..F8)"), X_("mixer-scenes"), false, false));
 	scenes->add_item (_mixer_scene_vbox);
 	scenes->set_border_width (2);
 	list_vpacker.pack_start (*scenes, false, false);

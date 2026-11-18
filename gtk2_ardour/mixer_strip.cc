@@ -1532,9 +1532,12 @@ MixerStrip::build_inspector_layout ()
 	routing->add_item (input_button_box);
 	routing->add_item (output_button);
 
-	StudioSection* inserts = manage (new StudioSection (_("Inserts"), pfx + X_("inserts"), true));
+	/* a compact insert rack (it scrolls when full); the fader gets the
+	 * remaining height instead of empty plugin slots */
+	StudioSection* inserts = manage (new StudioSection (_("Inserts"), pfx + X_("inserts"), false));
 	inserts->add_item (_tmaster_widget);
 	inserts->add_item (processor_box, true);
+	processor_box.set_size_request (-1, rintf ((_embedded ? 96.f : 120.f) * UIConfiguration::instance ().get_ui_scale ()));
 
 	StudioSection* sends = 0;
 	if (_embedded) {
@@ -1548,12 +1551,12 @@ MixerStrip::build_inspector_layout ()
 		}
 		_sends_box->show ();
 		/* sends are few: a compact list, the inserts get the rest */
-		_sends_box->set_size_request (-1, rintf (80.f * UIConfiguration::instance ().get_ui_scale ()));
+		_sends_box->set_size_request (-1, rintf (56.f * UIConfiguration::instance ().get_ui_scale ()));
 		sends = manage (new StudioSection (_("Sends"), pfx + X_("sends"), false));
 		sends->add_item (*_sends_box, true);
 	}
 
-	StudioSection* channel = manage (new StudioSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), false));
+	StudioSection* channel = manage (new StudioSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), true));
 	channel->add_item (invert_button_box);
 	channel->add_item (panners);
 	channel->add_item (rec_mon_table);
@@ -1561,13 +1564,13 @@ MixerStrip::build_inspector_layout ()
 	channel->add_item (solo_iso_table);
 	channel->add_item (mute_solo_table);
 	channel->add_item (*rw_box);
-	channel->add_item (gpm);
+	channel->add_item (gpm, true);
 	channel->add_item (control_slave_ui);
 	channel->add_item (bottom_button_table);
 
 	global_vpacker.set_spacing (4);
 	global_vpacker.pack_start (*routing, Gtk::PACK_SHRINK);
-	global_vpacker.pack_start (*inserts, true, true);
+	global_vpacker.pack_start (*inserts, false, false);
 	if (sends) {
 		global_vpacker.pack_start (*sends, false, false);
 	}
@@ -1584,7 +1587,7 @@ MixerStrip::build_inspector_layout ()
 		global_vpacker.pack_end (name_button, Gtk::PACK_SHRINK);
 		global_vpacker.pack_end (_comment_button, Gtk::PACK_SHRINK);
 	}
-	global_vpacker.pack_end (*channel, Gtk::PACK_SHRINK);
+	global_vpacker.pack_end (*channel, true, true);
 
 	routing->show ();
 	inserts->show ();
