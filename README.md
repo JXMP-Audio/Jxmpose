@@ -29,6 +29,10 @@ Ardour project.
   to recolour), optional automatic type folders.
 - **Mixer** — console-style strips with collapsible racks, sidebar tabs,
   mixer scenes.
+- **Track folders** — route groups shown as collapsible folders with
+  subfolders; a collapsed folder keeps its instrument bus visible.
+- **MIDI editor** — switch between *Key*, *Drum* (one row per drum sound)
+  and *Score* (music notation, view only for now) for the same region.
 
 ## Building
 
@@ -73,6 +77,9 @@ distributed under GPLv3.
 
 The Barlow typeface is licensed under the SIL Open Font License
 ([`gtk2_ardour/fonts/OFL-Barlow.txt`](gtk2_ardour/fonts/OFL-Barlow.txt)).
+The Leland music font (used for notation) is © MuseScore BVBA, also under
+the SIL Open Font License
+([`gtk2_ardour/fonts/OFL-Leland.txt`](gtk2_ardour/fonts/OFL-Leland.txt)).
 
 "Ardour" is a trademark of Paul Davis. JXMPOSE uses the name only to state
 its origin.

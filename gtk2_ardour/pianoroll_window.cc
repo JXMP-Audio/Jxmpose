@@ -56,7 +56,7 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	struct { ArdourWidgets::ArdourButton* b; EditorMode m; const char* tip; } modes[] = {
 		{ &key_button,   KeyEditor,   _("Notes on a piano keyboard grid") },
 		{ &drum_button,  DrumEditor,  _("Drum hits: one row per drum sound, notes as fixed-length hits") },
-		{ &score_button, ScoreEditor, _("Music notation (in development)") },
+		{ &score_button, ScoreEditor, _("Music notation of the region (view only for now; Ctrl+wheel to zoom)") },
 	};
 	for (auto const& m : modes) {
 		m.b->set_name ("tab button");
@@ -79,11 +79,10 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	mode_bar.set_spacing (2);
 	mode_bar.set_border_width (3);
 
-	score_label.set_markup (string_compose ("<span size=\"large\"><b>%1</b></span>\n\n%2",
-	                                        _("Score Editor"),
-	                                        _("Music notation view of this MIDI region is in development.\nUse the Key or Drum editor for now.")));
-	score_label.set_justify (Gtk::JUSTIFY_CENTER);
-	score_placeholder.pack_start (score_label, true, true);
+	/* score: notation of the region (read-only for now); Ctrl+wheel zooms */
+	score_scroller.set_policy (Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+	score_scroller.add (score_view);
+	score_placeholder.pack_start (score_scroller, true, true);
 
 	vpacker.pack_start (mode_bar, false, false);
 	vpacker.pack_start (hpacker, true, true);
@@ -115,7 +114,8 @@ PianorollWindow::set_editor_mode (EditorMode m)
 
 	if (m == ScoreEditor) {
 		hpacker.hide ();
-		score_label.show ();
+		score_view.set_region (_region);
+		score_scroller.show_all ();
 		score_placeholder.show ();
 		return;
 	}
@@ -153,6 +153,10 @@ PianorollWindow::set_region (std::shared_ptr<MidiTrack> track, std::shared_ptr<M
 {
 	pianoroll->add_region (region, track);
 	pianoroll->set_region (region);
+	_region = region;
+	if (_mode == ScoreEditor) {
+		score_view.set_region (region);
+	}
 
 	/* follow the track's note mode (drum tracks open in the drum editor) */
 	if (_mode != ScoreEditor) {
@@ -166,6 +170,10 @@ void
 PianorollWindow::replace_region (std::shared_ptr<MidiTrack> track, std::shared_ptr<MidiRegion> region)
 {
 	pianoroll->replace_region (region, track);
+	_region = region;
+	if (_mode == ScoreEditor) {
+		score_view.set_region (region);
+	}
 }
 
 void

@@ -148,6 +148,8 @@ load_custom_fonts()
 		"Barlow-Medium.ttf",
 		"Barlow-SemiBold.ttf",
 		"Barlow-BoldItalic.ttf",
+		/* music notation (SMuFL), used by the score editor */
+		"Leland.otf",
 	};
 	Searchpath font_path (ardour_data_search_path ());
 	font_path.add_subdirectory_to_paths ("fonts");

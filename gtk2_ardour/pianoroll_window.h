@@ -22,8 +22,11 @@
 
 #include <ytkmm/box.h>
 #include <ytkmm/label.h>
+#include <ytkmm/scrolledwindow.h>
 
 #include "widgets/ardour_button.h"
+
+#include "score_view.h"
 
 namespace ARDOUR {
 	class MidiRegion;
@@ -60,7 +63,9 @@ private:
 	Gtk::HBox     mode_bar;
 	Gtk::HBox     hpacker;
 	Gtk::VBox     score_placeholder;
-	Gtk::Label    score_label;
+	Gtk::ScrolledWindow score_scroller;
+	ScoreView     score_view;
+	std::shared_ptr<ARDOUR::MidiRegion> _region;
 	Pianoroll*    pianoroll;
 	RegionEditor* region_editor;
 	EditorMode    _mode;

@@ -229,6 +229,7 @@ gtk2_ardour_sources = [
         'pianoroll_velocity.cc',
         'pianoroll_midi_view.cc',
         'pianoroll_window.cc',
+        'score_view.cc',
         'pingback.cc',
         'pitch_color_dialog.cc',
         'playlist_selector.cc',
@@ -1019,6 +1020,7 @@ def build(bld):
     bld.install_files(bld.env['DATADIR'], 'ArdourMono.ttf')
     bld.install_files(bld.env['DATADIR'], 'ArdourSans.ttf')
     bld.install_files(os.path.join (bld.env['DATADIR'], 'fonts'), bld.path.ant_glob('fonts/*.ttf'))
+    bld.install_files(os.path.join (bld.env['DATADIR'], 'fonts'), bld.path.ant_glob('fonts/*.otf'))
     bld.install_files(os.path.join (bld.env['DATADIR'], 'fonts'), bld.path.ant_glob('fonts/OFL-*.txt'))
 
     # Application/Product specific resources (icon, splash)
