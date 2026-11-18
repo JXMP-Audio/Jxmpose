@@ -152,3 +152,6 @@ waf3-*
 
 # misc custom files git should ignore
 /local
+
+# local test sessions (not part of the source)
+/test-sessions/
