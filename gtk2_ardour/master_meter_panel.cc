@@ -403,12 +403,11 @@ MasterMeterPanel::Display::render_level (Cairo::RefPtr<Cairo::Context> const& cr
 	double const scale_w = text_width (*this, "-60", label_font) + 8 * s;
 	double const top     = pad + vh + 6 * s;  // room for max-peak readouts
 	double const bottom  = h - pad - lh - 4 * s;
-	/* slim bars, centred; the gap leaves room for the max-peak readouts */
-	double const bw      = rint (14 * s);
-	double const gap     = std::max (3.0 * s, text_width (*this, "-88.8", value_font) - bw + 6 * s);
-	double const gw      = n * bw + (n - 1) * gap;
-	double const x0      = rint (std::max (pad + scale_w, (w - gw - scale_w) / 2 + scale_w));
-	double const x1      = x0 + gw;
+	/* bars fill the frame with the same margin on both sides */
+	double const x0      = rint (pad + scale_w);
+	double const x1      = rint (w - pad);
+	double const gap     = rint (6 * s);
+	double const bw      = std::max (4.0, (x1 - x0 - (n - 1) * gap) / n);
 	double const mh      = bottom - top;
 
 	for (size_t i = 0; i < n; ++i) {
@@ -536,11 +535,10 @@ MasterMeterPanel::Display::render_loudness (Cairo::RefPtr<Cairo::Context> const&
 		return;
 	}
 	double const scale_w = text_width (*this, "-50", label_font) + 8 * s;
-	double const bw      = rint (16 * s);
+	double const x0      = rint (pad + scale_w);
+	double const x1      = rint (w - pad);
 	double const gap     = rint (6 * s);
-	double const gw      = 3 * bw + 2 * gap;
-	double const x0      = rint (std::max (pad + scale_w, (w - gw - scale_w) / 2 + scale_w));
-	double const x1      = x0 + gw;
+	double const bw      = std::max (4.0, (x1 - x0 - 2 * gap) / 3);
 
 	struct Bar { char const* label; float v; char const* col; };
 	Bar const bars[] = {
@@ -571,7 +569,7 @@ MasterMeterPanel::Display::render_loudness (Cairo::RefPtr<Cairo::Context> const&
 	set_color (cr, "widget:orange");
 	cr->set_line_width (2 * s);
 	cr->move_to (x0 - 3 * s, yt);
-	cr->line_to (x1 + 3 * s, yt);
+	cr->line_to (x1, yt);
 	cr->stroke ();
 	text (*this, cr, fmt1 (target), label_font, x0 - 5 * s, yt, 1);
 }
