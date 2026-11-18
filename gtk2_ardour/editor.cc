@@ -66,6 +66,7 @@
 #include <ytkmm/menuitem.h>
 
 #include "gtkmm2ext/cairo_theme.h"
+#include "gtkmm2ext/menu_elems.h"
 #include "gtkmm2ext/bindings.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/keyboard.h"
@@ -626,6 +627,7 @@ Editor::Editor ()
 	editor_summary_pane.add (_summary_vbox);
 
 	HBox* tabbox = manage (new HBox (true));
+	_notebook_tabbox = tabbox;
 	tabbox->set_spacing (3);
 	tabbox->pack_start (_notebook_tab1);
 	tabbox->pack_start (_notebook_tab2);
@@ -721,8 +723,13 @@ Editor::Editor ()
 			std::string label (_the_notebook.get_tab_label_text (*_the_notebook.get_nth_page (page)));
 			_notebook_tab1.set_active (label);
 			_notebook_tab2.set_active (label);
+			update_studio_list_tabs (page);
 			instant_save ();
 			});
+
+	if (CairoTheme::studio_widgets ()) {
+		setup_studio_editor_list ();
+	}
 
 	_notebook_tab1.set_name ("tab button");
 	_notebook_tab2.set_name ("tab button");
@@ -5684,6 +5691,74 @@ Editor::action_menu_item (std::string const & name)
 	assert (a);
 
 	return *manage (a->create_menu_item ());
+}
+
+void
+Editor::setup_studio_editor_list ()
+{
+	struct { const char* label; const char* tip; Gtk::Widget* w; } tabs[] = {
+		{ _("Tracks"),  _("Tracks & Busses"), &_routes->widget () },
+		{ _("Regions"), _("Regions"),         &_regions->widget () },
+		{ _("Marks"),   _("Ranges & Marks"),  &_locations->widget () },
+		{ _("Meter"),   _("Master Meter"),    _master_meter_panel },
+	};
+
+	HBox* tabrow = manage (new HBox (false, 1));
+	for (auto const& t : tabs) {
+		if (!t.w) {
+			continue;
+		}
+		ArdourButton* b = manage (new ArdourButton (t.label));
+		b->set_name ("tab button");
+		b->set_corner_radius (2);
+		set_tooltip (*b, t.tip);
+		Gtk::Widget* w = t.w;
+		b->signal_clicked.connect ([this, w] () {
+				_the_notebook.set_current_page (_the_notebook.page_num (*w));
+				});
+		tabrow->pack_start (*b, true, true);
+		_studio_list_tabs.push_back (std::make_pair (b, w));
+	}
+
+	/* every page (including the ones above) is reachable from "More" */
+	using namespace Menu_Helpers;
+	for (int i = 0; i < _the_notebook.get_n_pages (); ++i) {
+		Gtk::Widget* w = _the_notebook.get_nth_page (i);
+		std::string name (_the_notebook.get_tab_label_text (*w));
+		_studio_list_more.add_menu_elem (Gtkmm2ext::MenuElemNoMnemonic (name, [this, w] () {
+				_the_notebook.set_current_page (_the_notebook.page_num (*w));
+				}));
+	}
+	_studio_list_more.set_name ("tab button");
+	_studio_list_more.set_text (_("More"));
+	_studio_list_more.set_sizing_texts ({ _("More") });
+	set_tooltip (_studio_list_more, _("All sidebar pages"));
+	tabrow->pack_start (_studio_list_more, true, true);
+
+	_notebook_tabbox->hide ();
+	_notebook_tabbox->set_no_show_all ();
+	_editor_list_vbox.pack_start (*tabrow, false, false);
+	_editor_list_vbox.reorder_child (*tabrow, 2);
+	tabrow->show_all ();
+
+	update_studio_list_tabs (_the_notebook.get_current_page ());
+}
+
+void
+Editor::update_studio_list_tabs (int page)
+{
+	if (_studio_list_tabs.empty ()) {
+		return;
+	}
+	/* called from switch-page, before the notebook's current page changes */
+	Gtk::Widget* cur = _the_notebook.get_nth_page (page);
+	bool in_row = false;
+	for (auto const& t : _studio_list_tabs) {
+		t.first->set_active (t.second == cur);
+		in_row |= (t.second == cur);
+	}
+	/* "More" stays short (it sizes the sidebar); it lights up for the other pages */
+	_studio_list_more.set_active_state ((!in_row && cur) ? Gtkmm2ext::ExplicitActive : Gtkmm2ext::Off);
 }
 
 void

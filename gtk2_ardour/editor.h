@@ -587,6 +587,13 @@ private:
 
 	void add_notebook_page (std::string const&, std::string const&, Gtk::Widget&);
 
+	/* studio look: tab row + "More" menu instead of the two pagers */
+	Gtk::HBox*                    _notebook_tabbox;
+	ArdourWidgets::ArdourDropdown _studio_list_more;
+	std::vector<std::pair<ArdourWidgets::ArdourButton*, Gtk::Widget*> > _studio_list_tabs;
+	void setup_studio_editor_list ();
+	void update_studio_list_tabs (int page);
+
 	ArdourWidgets::VPane editor_summary_pane;
 
 	Gtk::EventBox meter_base;
