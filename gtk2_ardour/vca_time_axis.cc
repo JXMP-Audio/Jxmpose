@@ -356,6 +356,11 @@ VCATimeAxisView::color () const
 void
 VCATimeAxisView::set_height (uint32_t h, TrackHeightMode m, bool from_idle)
 {
+	if (UIConfiguration::instance ().get_widget_style () == X_("studio")) {
+		/* studio tracks are a single row by default, but a VCA header needs
+		 * two (name + buttons, gain slider) */
+		h = std::max (h, two_row_height ());
+	}
 	TimeAxisView::set_height (h, m, from_idle);
 
 	if (height >= preset_height (HeightNormal)) {

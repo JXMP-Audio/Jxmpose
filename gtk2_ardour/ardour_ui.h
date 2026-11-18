@@ -337,6 +337,7 @@ public:
 
 	void add_route ();
 	void add_route_dialog_response (int);
+	void sort_into_type_folders ();
 
 	void add_routes_part_two ();
 	void add_routes_thread ();

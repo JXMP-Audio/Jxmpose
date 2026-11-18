@@ -105,6 +105,7 @@
 #include "ardour/transport_master.h"
 #include "ardour/transport_master_manager.h"
 #include "ardour/triggerbox.h"
+#include "ardour/plugin_insert.h"
 #include "ardour/track.h"
 #include "ardour/vca_manager.h"
 #include "ardour/utils.h"
@@ -2847,6 +2848,41 @@ default_track_folder (Session* s, AddRouteDialog::TypeWanted type, PluginInfoPtr
 	g->set_rgba (rgba);
 	s->add_route_group (g);
 	return g;
+}
+
+/** Put every track and bus that is not in any group yet into the folder
+ * (route group) for its type, like newly added tracks.
+ */
+void
+ARDOUR_UI::sort_into_type_folders ()
+{
+	if (!_session) {
+		return;
+	}
+	std::shared_ptr<RouteList const> routes = _session->get_routes ();
+	for (auto const& r : *routes) {
+		if (r->is_singleton () || r->is_foldbackbus () || r->is_hidden () || r->route_group ()) {
+			continue;
+		}
+		AddRouteDialog::TypeWanted type;
+		PluginInfoPtr instrument;
+		std::shared_ptr<Track> t = std::dynamic_pointer_cast<Track> (r);
+		if (t && t->data_type () == DataType::MIDI) {
+			type = AddRouteDialog::MidiTrack;
+			std::shared_ptr<PluginInsert> pi = std::dynamic_pointer_cast<PluginInsert> (r->the_instrument ());
+			if (pi) {
+				instrument = pi->plugin ()->get_info ();
+			}
+		} else if (t) {
+			type = AddRouteDialog::AudioTrack;
+		} else {
+			type = AddRouteDialog::AudioBus;
+		}
+		std::shared_ptr<RouteGroup> g = default_track_folder (_session, type, instrument);
+		if (g) {
+			g->add (r);
+		}
+	}
 }
 
 void
