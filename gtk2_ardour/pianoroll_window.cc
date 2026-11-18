@@ -48,9 +48,11 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	, drum_notation_button (_("Drum Notation"))
 	, dot_button (".")
 	, triplet_button ("3")
+	, quint_button ("5")
 	, _note_base (0)
 	, _note_dot (false)
 	, _note_triplet (false)
+	, _note_quint (false)
 {
 	pianoroll->set_session (&s);
 	set_default_size (1270, 700);
@@ -117,13 +119,18 @@ PianorollWindow::PianorollWindow (std::string const & name, Session& s)
 	dot_button.set_name ("tab button");
 	dot_button.set_corner_radius (2);
 	ArdourWidgets::set_tooltip (dot_button, _("Dotted note value (key: .)"));
-	dot_button.signal_clicked.connect ([this] () { _note_dot = !_note_dot; if (_note_dot) { _note_triplet = false; } apply_note_value (true); });
+	dot_button.signal_clicked.connect ([this] () { _note_dot = !_note_dot; if (_note_dot) { _note_triplet = _note_quint = false; } apply_note_value (true); });
 	note_value_box.pack_start (dot_button, false, false, 4);
 	triplet_button.set_name ("tab button");
 	triplet_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (triplet_button, _("Triplet: eighth and quarter notes as triplets (key: ;)"));
-	triplet_button.signal_clicked.connect ([this] () { _note_triplet = !_note_triplet; if (_note_triplet) { _note_dot = false; } apply_note_value (true); });
+	ArdourWidgets::set_tooltip (triplet_button, _("Triplets: quarter, eighth and sixteenth notes as triplets (key: ;)"));
+	triplet_button.signal_clicked.connect ([this] () { _note_triplet = !_note_triplet; if (_note_triplet) { _note_dot = _note_quint = false; } apply_note_value (true); });
 	note_value_box.pack_start (triplet_button, false, false);
+	quint_button.set_name ("tab button");
+	quint_button.set_corner_radius (2);
+	ArdourWidgets::set_tooltip (quint_button, _("Quintuplets: five sixteenth notes in a beat"));
+	quint_button.signal_clicked.connect ([this] () { _note_quint = !_note_quint; if (_note_quint) { _note_dot = _note_triplet = false; } apply_note_value (true); });
+	note_value_box.pack_start (quint_button, false, false);
 	note_value_box.set_spacing (2);
 	mode_bar.pack_start (note_value_box, false, false, 12);
 	apply_note_value (false);
@@ -265,7 +272,9 @@ PianorollWindow::apply_note_value (bool to_selection)
 	int64_t len = _note_base;
 	if (len && _note_dot) {
 		len = len * 3 / 2;
-	} else if (len && _note_triplet && (len == 1920 || len == 960)) {
+	} else if (len && _note_quint && len == 480) {
+		len = 384;
+	} else if (len && _note_triplet && (len == 1920 || len == 960 || len == 480)) {
 		len = len * 2 / 3;
 	}
 	score_view.set_insert_length (len);
@@ -274,6 +283,7 @@ PianorollWindow::apply_note_value (bool to_selection)
 	}
 	dot_button.set_active (_note_dot);
 	triplet_button.set_active (_note_triplet);
+	quint_button.set_active (_note_quint);
 
 	/* Dorico-style: picking a value with notes selected changes their length */
 	if (to_selection && len > 0 && score_view.has_selection ()) {
@@ -300,12 +310,12 @@ PianorollWindow::on_key_press_event (GdkEventKey* ev)
 			case GDK_0: set_note_value (0);    return true;
 			case GDK_period:
 				_note_dot = !_note_dot;
-				if (_note_dot) { _note_triplet = false; }
+				if (_note_dot) { _note_triplet = _note_quint = false; }
 				apply_note_value (true);
 				return true;
 			case GDK_semicolon:
 				_note_triplet = !_note_triplet;
-				if (_note_triplet) { _note_dot = false; }
+				if (_note_triplet) { _note_dot = _note_quint = false; }
 				apply_note_value (true);
 				return true;
 			default:

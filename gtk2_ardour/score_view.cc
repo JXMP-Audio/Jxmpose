@@ -27,6 +27,8 @@
 
 #include "ardour/midi_model.h"
 #include "ardour/midi_region.h"
+#include "ardour/midi_track.h"
+#include "ardour/scale.h"
 
 #include "pbd/history_owner.h"
 
@@ -54,7 +56,7 @@ enum : uint32_t {
 	NoteheadCircleX = 0xE0B3,
 	NoteheadTriangle = 0xE0BE,
 	TimeSig0       = 0xE080,
-	Tuplet3        = 0xE883,
+	Tuplet0        = 0xE880,
 	NoteheadWhole  = 0xE0A2,
 	NoteheadHalf   = 0xE0A3,
 	NoteheadBlack  = 0xE0A4,
@@ -95,15 +97,67 @@ utf8 (uint32_t c)
 	return s;
 }
 
-/** spelling with sharps: letter (0 = C .. 6 = B) and alteration */
-void
-spell (uint8_t pitch, int& diatonic, int& alter)
+const int natural_pc[7] = { 0, 2, 4, 5, 7, 9, 11 };
+
+/** alteration of a letter (0 = C .. 6 = B) in a key signature */
+int
+key_alter (int letter, int fifths)
 {
-	static const int letter[12] = { 0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6 };
-	static const int acc[12]    = { 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0 };
-	int const octave = pitch / 12 - 1;
-	diatonic = octave * 7 + letter[pitch % 12];
-	alter    = acc[pitch % 12];
+	static const int sharps[7] = { 3, 0, 4, 1, 5, 2, 6 }; /* F C G D A E B */
+	static const int flats[7]  = { 6, 2, 5, 1, 4, 0, 3 }; /* B E A D G C F */
+	int const n = std::min (7, std::abs (fifths));
+	for (int i = 0; i < n; ++i) {
+		if ((fifths > 0 ? sharps[i] : flats[i]) == letter) {
+			return fifths > 0 ? 1 : -1;
+		}
+	}
+	return 0;
+}
+
+/** pitch class of a major key's scale degree set */
+bool
+in_major (int pc, int fifths)
+{
+	for (int l = 0; l < 7; ++l) {
+		if (((natural_pc[l] + key_alter (l, fifths)) % 12 + 12) % 12 == pc) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** spelling in a key: diatonic step (octave * 7 + letter) and alteration.
+ * Notes of the key are spelled as in its scale, others as naturals, or
+ * with sharps in sharp keys and flats in flat keys. */
+void
+spell (uint8_t pitch, int& diatonic, int& alter, int fifths = 0)
+{
+	int const pc = pitch % 12;
+	int l = -1, a = 0;
+	for (int k = 0; k < 7 && l < 0; ++k) {
+		int const ka = key_alter (k, fifths);
+		if (((natural_pc[k] + ka) % 12 + 12) % 12 == pc) {
+			l = k;
+			a = ka;
+		}
+	}
+	for (int k = 0; k < 7 && l < 0; ++k) {
+		if (natural_pc[k] == pc) {
+			l = k;
+		}
+	}
+	for (int k = 0; k < 7 && l < 0; ++k) {
+		if (fifths >= 0 && natural_pc[k] + 1 == pc) {
+			l = k;
+			a = 1;
+		} else if (fifths < 0 && natural_pc[k] - 1 == pc) {
+			l = k;
+			a = -1;
+		}
+	}
+	int const octave = ((int) pitch - a) / 12 - 1;
+	diatonic = octave * 7 + l;
+	alter    = a;
 }
 
 /** drum staff position (diatonic step, treble positions) and note head */
@@ -209,6 +263,8 @@ note_value (int64_t len, int64_t& base, bool& dotted)
 
 } // namespace
 
+const int64_t ScoreView::grid;
+
 ScoreView::ScoreView ()
 	: _sp (9. * UIConfiguration::instance ().get_ui_scale ())
 	, _percussion (false)
@@ -228,6 +284,7 @@ ScoreView::ScoreView ()
 	, _dragging (false)
 	, _drag_dt (0)
 	, _drag_dp (0)
+	, _fifths (0)
 {
 	add_events (Gdk::SCROLL_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::BUTTON1_MOTION_MASK | Gdk::KEY_PRESS_MASK);
 	set_can_focus (true);
@@ -250,6 +307,13 @@ ScoreView::set_region (std::shared_ptr<MidiRegion> r)
 		}
 		_region->PropertyChanged.connect (_connections, invalidator (*this), std::bind (&ScoreView::model_changed, this), gui_context ());
 	}
+	rebuild ();
+}
+
+void
+ScoreView::set_track (std::shared_ptr<MidiTrack> t)
+{
+	_track = t;
 	rebuild ();
 }
 
@@ -327,41 +391,111 @@ ScoreView::rebuild ()
 		}
 		_selection.swap (still);
 
-		/* triplet beats: a note starts clearly nearer to the eighth-triplet
-		 * grid (1/3, 2/3 of the beat) than to the 16th grid, or ends
-		 * exactly on it */
-		_triplet_beats[0].clear ();
-		_triplet_beats[1].clear ();
 		int64_t const bt = beat_ticks ();
 		auto staff_of = [&] (uint8_t pitch) {
 			/* staff, or voice in drum notation (0: hands, 1: feet) */
 			return _percussion ? (is_foot (pitch) ? 1 : 0) : (pitch >= 60 ? 0 : 1);
 		};
+
+		/* key signature: the major key (relative minor alike) that leaves
+		 * the least note time outside its scale; the track's key when the
+		 * notes fit it about as well */
+		_fifths = 0;
+		if (!_percussion) {
+			double w[12] = { 0 };
+			double total = 0;
+			for (auto const& n : model->notes ()) {
+				double const l = std::max<int64_t> (grid, n->length ().to_ticks ());
+				w[n->note () % 12] += l;
+				total += l;
+			}
+			auto outside = [&] (int f) {
+				double out = 0;
+				for (int pc = 0; pc < 12; ++pc) {
+					out += in_major (pc, f) ? 0 : w[pc];
+				}
+				return out;
+			};
+			double best = 1e18;
+			for (int f = -6; f <= 6; ++f) {
+				double const out = outside (f) + total * 0.01 * std::abs (f);
+				if (out < best) {
+					best    = out;
+					_fifths = f;
+				}
+			}
+			MusicalKey const* key = _track ? _track->key () : 0;
+			for (int f = -7; key && f <= 7; ++f) {
+				bool same = true;
+				for (int pc = 0; pc < 12; ++pc) {
+					same &= key->in_key (60 + pc) == in_major (pc, f);
+				}
+				if (same) {
+					if (outside (f) <= outside (_fifths) + total * 0.05) {
+						_fifths = f;
+					}
+					break;
+				}
+			}
+		}
+
+		/* tuplets: per beat, the grid that fits the note starts (and
+		 * entered note ends) clearly better than the 16th grid */
+		_beat_div[0].clear ();
+		_beat_div[1].clear ();
 		if (bt == quarter) {
-			int64_t const tg = quarter / 3;
+			std::map<int64_t, std::vector<int64_t>> offs[2];
 			for (auto const& n : model->notes ()) {
 				int64_t const s = _region->source_beats_to_absolute_beats (n->time ()).to_ticks () - origin;
 				int64_t const e = _region->source_beats_to_absolute_beats (n->end_time ()).to_ticks () - origin;
 				if (e <= r_start || s >= r_end || s < 0) {
 					continue;
 				}
-				int64_t const off = s % bt;
-				int64_t const n3  = ((off + tg / 2) / tg) * tg;
-				int64_t const d3  = std::abs (off - n3);
-				int64_t const d4  = std::abs (off - ((off + grid / 2) / grid) * grid);
-				if ((n3 == tg || n3 == 2 * tg) && d3 * 2 < d4) {
-					_triplet_beats[staff_of (n->note ())].insert (s / bt);
+				int const st = staff_of (n->note ());
+				offs[st][s / bt].push_back (s % bt);
+				/* ends count when they are exactly on a tuplet grid
+				 * (entered tuplets), not when played */
+				int64_t const eo = e % bt;
+				if (e - s >= grid / 2 && eo % grid && (eo % 320 == 0 || eo % 384 == 0)) {
+					offs[st][e / bt].push_back (eo);
 				}
-				int64_t const eoff = e % bt;
-				if (e > 0 && (eoff == tg || eoff == 2 * tg)) {
-					_triplet_beats[staff_of (n->note ())].insert (e / bt);
+			}
+			for (int st = 0; st < 2; ++st) {
+				std::set<int64_t> beats;
+				for (auto const& o : offs[st]) {
+					beats.insert (o.first);
+				}
+				for (int64_t beat : beats) {
+					std::vector<int64_t> const& os (offs[st][beat]);
+					auto maxdist = [&] (int dv) {
+						int64_t const g = quarter / dv;
+						int64_t m = 0;
+						for (int64_t o : os) {
+							int64_t const q = ((o + g / 2) / g) * g;
+							m = std::max (m, std::abs (o - q));
+						}
+						return m;
+					};
+					int64_t const m4 = maxdist (4);
+					int dv = 4;
+					int64_t md = m4;
+					for (int cand : { 3, 6, 5 }) {
+						int64_t const m = maxdist (cand);
+						if (m * 2 < m4 && m < md) {
+							dv = cand;
+							md = m;
+						}
+					}
+					if (dv != 4) {
+						_beat_div[st][beat] = dv;
+					}
 				}
 			}
 		}
 
 		auto quantize = [&] (int staff, int64_t t) {
 			int64_t const b   = t / bt;
-			int64_t const g   = (bt == quarter && _triplet_beats[staff].count (b)) ? quarter / 3 : grid;
+			int64_t const g   = quarter / beat_div (staff, t);
 			int64_t const off = t - b * bt;
 			return b * bt + ((off + g / 2) / g) * g;
 		};
@@ -374,7 +508,7 @@ ScoreView::rebuild ()
 			}
 			s = std::max (s, r_start);
 			e = std::min (e, r_end);
-			bool const hit = (e - s) < grid;
+			bool const hit = (e - s) < grid / 2; /* drum hits, very short notes */
 
 			int const staff = staff_of (n->note ());
 
@@ -382,7 +516,7 @@ ScoreView::rebuild ()
 			s = quantize (staff, s);
 			e = quantize (staff, e);
 			if (e <= s) {
-				e = s + (_triplet_beats[staff].count (s / bt) ? quarter / 3 : grid);
+				e = s + quarter / beat_div (staff, s);
 			}
 
 			/* split at bar lines, tied */
@@ -405,15 +539,80 @@ ScoreView::rebuild ()
 		}
 	}
 
+	/* two voices per staff: notes that overlap others (by more than a
+	 * 16th) and are not part of their chord go to the second voice; the
+	 * higher voice is the first one */
+	auto split_voices = [&] (std::vector<Seg>& in, std::vector<Seg>& v2) {
+		std::sort (in.begin (), in.end (), [] (Seg const& a, Seg const& b) {
+			return a.start < b.start || (a.start == b.start && a.pitch > b.pitch);
+		});
+		std::vector<Seg> v[2];
+		int64_t vend[2] = { 0, 0 }, cs[2] = { -1, -1 }, ce[2] = { -1, -1 };
+		auto joins = [&] (Seg const& s, int k) {
+			return s.start == cs[k] && std::abs (s.end - ce[k]) <= std::max (grid, (ce[k] - cs[k]) / 4);
+		};
+		int last[2] = { -1, -1 }; /* last (lowest) pitch per voice */
+		for (auto const& s : in) {
+			int k = -1;
+			/* a free second voice keeps its line: a note below the first
+			 * voice's chord that is nearer to the second voice's last note */
+			if (!v[1].empty () && s.start >= vend[1] - grid && last[0] >= 0 && s.pitch < last[0]
+			    && std::abs ((int) s.pitch - last[1]) < std::abs ((int) s.pitch - last[0])) {
+				k     = 1;
+				cs[1] = s.start;
+				ce[1] = s.end;
+				vend[1] = s.end;
+			}
+			for (int c = 0; c < 2 && k < 0; ++c) {
+				if (joins (s, c)) {
+					k = c;
+				} else if (s.start >= vend[c] - grid) {
+					k      = c;
+					cs[c]  = s.start;
+					ce[c]  = s.end;
+					vend[c] = s.end;
+				}
+			}
+			if (k < 0) {
+				k = 0;
+			}
+			vend[k] = std::max (vend[k], s.end);
+			last[k] = s.pitch;
+			v[k].push_back (s);
+		}
+		if (!v[1].empty ()) {
+			double m0 = 0, m1 = 0;
+			for (auto const& s : v[0]) { m0 += s.pitch; }
+			for (auto const& s : v[1]) { m1 += s.pitch; }
+			if (m1 / v[1].size () > m0 / std::max<size_t> (1, v[0].size ())) {
+				std::swap (v[0], v[1]);
+			}
+		}
+		in.swap (v[0]);
+		v2.swap (v[1]);
+	};
+
 	_bars.resize (n_bars);
 	for (size_t b = 0; b < n_bars; ++b) {
 		Bar& bar (_bars[b]);
-		build_bar_pieces (bar, b, 0, segs[0][b]);
-		build_bar_pieces (bar, b, 1, segs[1][b]);
+		for (int st = 0; st < 2; ++st) {
+			std::vector<Seg> v2;
+			if (!_percussion) {
+				split_voices (segs[st][b], v2);
+			}
+			build_bar_pieces (bar.staff[st], b, st, segs[st][b]);
+			bar.voice2[st].clear ();
+			if (!v2.empty ()) {
+				build_bar_pieces (bar.voice2[st], b, st, v2);
+			}
+		}
 
 		std::set<int64_t> on;
 		for (int st = 0; st < 2; ++st) {
 			for (auto const& p : bar.staff[st]) {
+				on.insert (p.start);
+			}
+			for (auto const& p : bar.voice2[st]) {
 				on.insert (p.start);
 			}
 		}
@@ -426,14 +625,13 @@ ScoreView::rebuild ()
 			int64_t const next = (k + 1 < bar.onsets.size ()) ? bar.onsets[k + 1] : _bar_len;
 			int64_t const gap  = next - bar.onsets[k];
 			bool accidental = false;
-			for (int st = 0; st < 2; ++st) {
-				for (auto const& p : bar.staff[st]) {
+			for (int li = 0; li < 4 && !_percussion; ++li) {
+				for (auto const& p : (li < 2 ? bar.staff[li] : bar.voice2[li - 2])) {
 					if (p.start != bar.onsets[k]) {
 						continue;
 					}
 					for (auto pi : p.pitches) {
-						int const pc = pi % 12;
-						accidental |= (pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10);
+						accidental |= !in_major (pi % 12, _fifths);
 					}
 				}
 			}
@@ -448,14 +646,13 @@ ScoreView::rebuild ()
 }
 
 void
-ScoreView::build_bar_pieces (Bar& bar, size_t bar_index, int staff, std::vector<Seg> const& in)
+ScoreView::build_bar_pieces (std::vector<Piece>& out, size_t bar_index, int staff, std::vector<Seg> const& in)
 {
 	std::vector<Seg> segs (in);
 	std::sort (segs.begin (), segs.end (), [] (Seg const& a, Seg const& b) {
 		return a.start < b.start || (a.start == b.start && a.pitch < b.pitch);
 	});
 
-	std::vector<Piece>& out (bar.staff[staff]);
 	out.clear ();
 
 	auto add_rest = [&] (int64_t s, int64_t len) {
@@ -489,7 +686,7 @@ ScoreView::build_bar_pieces (Bar& bar, size_t bar_index, int staff, std::vector<
 		int64_t const next = (j < segs.size ()) ? segs[j].start : _bar_len;
 		en = std::min (en, next);
 
-		/* readability: a hit (shorter than a 16th) followed by a rest in
+		/* readability: a hit (shorter than a 32nd) followed by a rest in
 		 * the same beat takes the rest's time (16th + rest -> 8th or
 		 * quarter), like drum hits are usually written. Notes with a
 		 * real length are shown as they are. */
@@ -553,49 +750,62 @@ ScoreView::beat_ticks () const
 	return (_beat_value == 8 && _beats % 3 == 0) ? eighth * 3 : (Beats::PPQN * 4) / _beat_value;
 }
 
-bool
-ScoreView::triplet_beat (int staff, int64_t abs_tick) const
+int
+ScoreView::beat_div (int staff, int64_t abs_tick) const
 {
-	return beat_ticks () == quarter && _triplet_beats[staff].count (abs_tick / quarter);
+	if (beat_ticks () != quarter) {
+		return 4;
+	}
+	auto i = _beat_div[staff].find (abs_tick / quarter);
+	return i == _beat_div[staff].end () ? 4 : i->second;
 }
 
-std::vector<std::pair<std::pair<int64_t, int64_t>, bool>>
+std::vector<std::pair<std::pair<int64_t, int64_t>, int>>
 ScoreView::split_piece (size_t bar_index, int staff, int64_t start, int64_t len, bool dots) const
 {
-	std::vector<std::pair<std::pair<int64_t, int64_t>, bool>> r;
+	std::vector<std::pair<std::pair<int64_t, int64_t>, int>> r;
 	int64_t const bar0 = bar_index * _bar_len;
-	int64_t const tg   = quarter / 3;
 
 	while (len > 0) {
 		int64_t const abs = bar0 + start;
-		if (triplet_beat (staff, abs)) {
-			/* inside a triplet beat: quarter (2/3) and eighth (1/3) values */
+		int const     dv  = beat_div (staff, abs);
+		if (dv != 4) {
+			/* inside a tuplet beat: multiples of the tuplet unit */
+			int64_t const u        = quarter / dv;
 			int64_t const beat_end = (abs / quarter + 1) * quarter - bar0;
 			int64_t const chunk    = std::min (len, beat_end - start);
 			int64_t const off      = start % quarter;
 			int64_t v;
 			if (off == 0 && chunk >= quarter) {
 				v = quarter;
-				r.push_back (std::make_pair (std::make_pair (start, v), false));
+				r.push_back (std::make_pair (std::make_pair (start, v), 0));
 			} else {
-				v = (off == 0 && chunk >= 2 * tg) ? 2 * tg : std::min (chunk, tg);
-				r.push_back (std::make_pair (std::make_pair (start, v), true));
+				int64_t const units = chunk / u;
+				int64_t n = 1;
+				for (int64_t c : (dv == 3 ? std::vector<int64_t> { 2, 1 } : std::vector<int64_t> { 4, 3, 2, 1 })) {
+					if (c <= units) {
+						n = c;
+						break;
+					}
+				}
+				v = units ? n * u : chunk;
+				r.push_back (std::make_pair (std::make_pair (start, v), dv));
 			}
 			start += v;
 			len   -= v;
 			continue;
 		}
 
-		/* plain values, up to the next triplet beat */
+		/* plain values, up to the next tuplet beat */
 		int64_t limit = len;
 		for (int64_t t = (abs / quarter + 1) * quarter; t < bar0 + start + len; t += quarter) {
-			if (triplet_beat (staff, t)) {
+			if (beat_div (staff, t) != 4) {
 				limit = t - abs;
 				break;
 			}
 		}
 		for (auto const& v : split_duration (start, limit, _bar_len, dots)) {
-			r.push_back (std::make_pair (v, false));
+			r.push_back (std::make_pair (v, 0));
 		}
 		start += limit;
 		len   -= limit;
@@ -607,11 +817,19 @@ void
 ScoreView::piece_value (Piece const& p, int64_t& base, bool& dotted)
 {
 	if (p.tuplet) {
-		dotted = false;
-		base   = (p.len >= 2 * quarter / 3) ? quarter : eighth;
+		/* written value: units of an eighth (triplets) or a 16th */
+		int64_t const u    = quarter / p.tuplet;
+		int64_t const unit = p.tuplet == 3 ? eighth : grid;
+		note_value (std::max<int64_t> (1, p.len / u) * unit, base, dotted);
 		return;
 	}
 	note_value (p.len, base, dotted);
+}
+
+double
+ScoreView::key_width () const
+{
+	return std::abs (_fifths) * _sp;
 }
 
 double
@@ -649,7 +867,7 @@ ScoreView::layout ()
 		System s;
 		s.first_bar = b;
 		s.y         = y;
-		s.x0        = margin + _sp * 4.5 + (_systems.empty () ? _sp * 3 : 0);
+		s.x0        = margin + _sp * 4.5 + key_width () + (_systems.empty () ? _sp * 3 : 0);
 
 		double w = 0;
 		size_t n = 0;
@@ -766,12 +984,12 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 			drum_position (pitch, d, head);
 			alt = 0;
 		} else {
-			spell (pitch, d, alt);
+			spell (pitch, d, alt, _fifths);
 		}
 	};
 
 	struct Pending { double x, y; size_t system; bool below; };
-	std::map<uint8_t, Pending> pending_tie[2];
+	std::map<uint8_t, Pending> pending_tie[2]; /* per staff */
 
 	auto draw_tie = [&] (double x1, double x2, double y, bool below) {
 		double const h  = (below ? 1 : -1) * std::min (sp * 1.2, std::max (sp * 0.5, (x2 - x1) * 0.12));
@@ -827,18 +1045,32 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 			draw_glyph (cr, FClef, margin + sp * 0.7, top1 + 1 * sp);
 		}
 
+		/* key signature */
+		if (!_percussion && _fifths) {
+			static const int sharp_d[7] = { 38, 35, 39, 36, 33, 37, 34 };
+			static const int flat_d[7]  = { 34, 37, 33, 36, 32, 35, 31 };
+			for (int st = 0; st < 2; ++st) {
+				double const bottom = (st == 0 ? top0 : top1) + 4 * sp;
+				int const    ref    = bottom_line (st);
+				for (int i = 0; i < std::abs (_fifths); ++i) {
+					int const d = (_fifths > 0 ? sharp_d[i] : flat_d[i]) - (st == 0 ? 0 : 14);
+					draw_glyph (cr, _fifths > 0 ? AccSharp : AccFlat, margin + sp * (3.8 + i), bottom - (d - ref) * sp / 2.);
+				}
+			}
+		}
+
 		/* time signature on the first system */
 		if (si == 0) {
 			for (int st = 0; st < (_percussion ? 1 : 2); ++st) {
 				double const top = st == 0 ? top0 : top1;
 				std::string const n = string_compose ("%1", _beats);
 				std::string const d = string_compose ("%1", _beat_value);
-				double x = margin + sp * 4.6;
+				double x = margin + sp * 4.6 + key_width ();
 				for (char c : n) {
 					draw_glyph (cr, TimeSig0 + (c - '0'), x, top + sp);
 					x += glyph_width (cr, TimeSig0 + (c - '0'));
 				}
-				x = margin + sp * 4.6;
+				x = margin + sp * 4.6 + key_width ();
 				for (char c : d) {
 					draw_glyph (cr, TimeSig0 + (c - '0'), x, top + 3 * sp);
 					x += glyph_width (cr, TimeSig0 + (c - '0'));
@@ -864,14 +1096,23 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 				return bx + (sp * 1.4 + ox) * sys.stretch;
 			};
 
-			for (int st = 0; st < 2; ++st) {
+			std::map<int, int> altered_bar[2]; /* per staff: diatonic step -> alteration in this bar */
+
+			/* layers: staff 0, staff 1, then their second voices */
+			for (int li = 0; li < 4; ++li) {
+				int const  st  = li % 2;
+				bool const v2  = li >= 2;
+				bool const two = !_percussion && !bar.voice2[st].empty ();
+				if (v2 && !two) {
+					continue;
+				}
 				double const top    = st == 0 ? top0 : top1;
 				int const    ref    = _percussion ? bottom_line (0) : bottom_line (st);
 				double const bottom = top + 4 * sp;
 				double const middle = top + 2 * sp;
 				auto y_of = [&] (int d) { return bottom - (d - ref) * sp / 2.; };
 
-				std::vector<Piece> const& pieces (bar.staff[st]);
+				std::vector<Piece> const& pieces (v2 ? bar.voice2[st] : bar.staff[st]);
 
 				/* beam groups: 8ths/16ths inside one beat */
 				int64_t const beat = (_beat_value == 8 && _beats % 3 == 0) ? eighth * 3 : quarter;
@@ -923,12 +1164,12 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 							dmax = std::max (dmax, d);
 						}
 					}
-					bool const up = _percussion ? (st == 0) : ((dmin + dmax) / 2. < ref + 4);
+					bool const up = _percussion ? (st == 0) : (two ? !v2 : ((dmin + dmax) / 2. < ref + 4));
 					group_up[group[k]] = up;
 					group_y[group[k]]  = up ? std::min (y_of (dmax) - 3.25 * sp, middle) : std::max (y_of (dmin) + 3.25 * sp, middle);
 				}
 
-				std::map<int, int> altered; /* diatonic step -> alteration in this bar */
+				std::map<int, int>& altered (altered_bar[st]);
 				std::vector<double> stem_x (pieces.size (), 0);
 				std::vector<double> piece_x (pieces.size (), 0);
 				std::vector<double> piece_top (pieces.size (), 1e9); /* highest ink, for tuplet numbers */
@@ -954,10 +1195,10 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 							}
 						}
 						/* two voices on one staff: rests move out of the way */
-						double const voice_dy = _percussion ? (st == 0 ? -sp : 2 * sp) : 0;
+						double const voice_dy = _percussion ? (st == 0 ? -sp : 2 * sp) : (two ? (v2 ? 2 * sp : -sp) : 0);
 						if (p.len == _bar_len) {
 							double const w = glyph_width (cr, RestWhole);
-							draw_glyph (cr, RestWhole, bx + (bw - w) / 2, top + sp + (st == 1 ? voice_dy : 0));
+							draw_glyph (cr, RestWhole, bx + (bw - w) / 2, top + sp + ((_percussion && st == 0) ? 0 : voice_dy));
 							continue;
 						}
 						uint32_t g = Rest16th;
@@ -992,7 +1233,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 					int const dmax = ds.back ().first;
 
 					bool const beamed = group[k] >= 0;
-					bool const up     = beamed ? group_up[group[k]] : (_percussion ? (st == 0) : ((dmin + dmax) / 2. < ref + 4));
+					bool const up     = beamed ? group_up[group[k]] : (_percussion ? (st == 0) : (two ? !v2 : ((dmin + dmax) / 2. < ref + 4)));
 
 					/* seconds: displace every other head to the other side of the stem */
 					std::vector<double> head_dx (ds.size (), 0);
@@ -1036,18 +1277,18 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 						uint8_t pitch = 0;
 						for (auto pi : p.pitches) {
 							int dd, aa;
-							spell (pi, dd, aa);
+							spell (pi, dd, aa, _fifths);
 							if (dd == d && aa == alt) {
 								pitch = pi;
 							}
 						}
 						bool const tied_in = pending_tie[st].count (pitch) > 0;
-						int const cur = altered.count (d) ? altered[d] : 0;
+						int const cur = altered.count (d) ? altered[d] : key_alter (((d % 7) + 7) % 7, _fifths);
 						altered[d] = alt;
 						if (tied_in || cur == alt) {
 							continue;
 						}
-						uint32_t const g = alt ? AccSharp : AccNatural;
+						uint32_t const g = alt > 0 ? AccSharp : (alt < 0 ? AccFlat : AccNatural);
 						double const gw  = glyph_width (cr, g);
 						if (last_acc_d - d < 6) {
 							acc_x -= gw + sp * 0.15;
@@ -1216,7 +1457,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 					size_t e = k;
 					double x0 = piece_x[k], x1 = piece_x[k], ytop = top;
 					bool one_beam = group[k] >= 0;
-					while (e < pieces.size () && pieces[e].tuplet && pieces[e].start / quarter == beat_no) {
+					while (e < pieces.size () && pieces[e].tuplet == pieces[k].tuplet && pieces[e].start / quarter == beat_no) {
 						x1   = piece_x[e];
 						ytop = std::min (ytop, piece_top[e]);
 						one_beam &= (group[e] >= 0 && group[e] == group[k]);
@@ -1224,8 +1465,9 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 					}
 					x1 += headw;
 					double const ny = ytop - sp * 0.8;
-					double const nw = glyph_width (cr, Tuplet3) * 0.7;
-					draw_glyph (cr, Tuplet3, (x0 + x1) / 2 - nw / 2, ny, 0.7);
+					uint32_t const num = Tuplet0 + pieces[k].tuplet;
+					double const   nw  = glyph_width (cr, num) * 0.7;
+					draw_glyph (cr, num, (x0 + x1) / 2 - nw / 2, ny, 0.7);
 					if (!one_beam) {
 						cr->set_line_width (line_w);
 						cr->move_to (x0, ny);
@@ -1378,7 +1620,7 @@ ScoreView::pitch_at (double x, double y, size_t& bar_index, uint8_t& pitch) cons
 	static const int semis[7] = { 0, 2, 4, 5, 7, 9, 11 };
 	int const octave = (int) floor (d / 7.);
 	int const letter = d - octave * 7;
-	int const p      = (octave + 1) * 12 + semis[letter];
+	int const p      = (octave + 1) * 12 + semis[letter] + key_alter (letter, _fifths);
 	if (p < 0 || p > 127) {
 		return false;
 	}
@@ -1598,7 +1840,7 @@ ScoreView::position_of (int64_t tick, uint8_t pitch, double& x, double& y) const
 		drum_position (pitch, d, head);
 		st = 0;
 	} else {
-		spell (pitch, d, alt);
+		spell (pitch, d, alt, _fifths);
 		st = pitch >= 60 ? 0 : 1;
 	}
 	int const ref = _percussion ? bottom_line (0) : bottom_line (st);

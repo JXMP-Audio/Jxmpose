@@ -19,6 +19,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -48,9 +49,12 @@ namespace PBD {
  * Up/Down transposes by a semitone (Ctrl: octave). Changes go through the
  * MIDI model's diff commands, so they can be undone.
  *
- * Notes are quantized to a 16th grid and laid out on a grand staff
- * (treble for middle C and above, bass below), with rests, ties, dots,
- * accidentals, ledger lines, flags and simple beams. Glyphs come from a
+ * Notes are quantized to a 16th grid (or a tuplet grid where the MIDI
+ * plays triplets, quintuplets or sixteenth triplets) and laid out on a
+ * grand staff (treble for middle C and above, bass below), with up to two
+ * voices per staff, the key signature of the track (or one guessed from
+ * the notes), rests, ties, dots, accidentals, ledger lines, flags and
+ * beams. Glyphs come from a
  * SMuFL music font (Leland, bundled under the SIL OFL).
  */
 class ScoreView : public Gtk::DrawingArea
@@ -75,7 +79,7 @@ public:
 	int64_t insert_length () const { return _insert_len; }
 
 	/** the track that plays notes while editing */
-	void set_track (std::shared_ptr<ARDOUR::MidiTrack> t) { _track = t; }
+	void set_track (std::shared_ptr<ARDOUR::MidiTrack>);
 	bool has_selection () const { return !_selection.empty (); }
 	/** give the selected notes a new length (ticks) */
 	void set_selection_length (int64_t);
@@ -98,7 +102,7 @@ public:
 		std::vector<uint8_t> pitches; ///< empty: rest
 		std::vector<bool>    tie_out; ///< per pitch: tied into the next piece
 		std::vector<NotePtr> notes;   ///< per pitch: the model note
-		bool                 tuplet = false; ///< part of an eighth-note triplet beat
+		int                  tuplet = 0;   ///< 0, or the division of its beat (3, 5, 6)
 	};
 
 	/** a note clipped to one bar */
@@ -106,12 +110,13 @@ public:
 		int64_t start, end;  ///< ticks from bar start
 		uint8_t pitch;
 		bool    tie_out;     ///< continues in the next bar
-		bool    hit;         ///< shorter than a 16th (drum hit, staccato)
+		bool    hit;         ///< shorter than a 32nd (drum hit)
 		NotePtr note;
 	};
 
 	struct Bar {
-		std::vector<Piece> staff[2];   ///< 0: treble, 1: bass
+		std::vector<Piece> staff[2];   ///< 0: treble, 1: bass (drums: hands, feet)
+		std::vector<Piece> voice2[2];  ///< second voice (stems down), if any
 		std::vector<int64_t> onsets;   ///< union of piece starts, sorted
 		std::vector<double>  onset_x;  ///< x offset of each onset from bar start
 		double               width;
@@ -187,15 +192,20 @@ private:
 	void model_changed ();
 	void rebuild ();
 	void layout ();
-	void build_bar_pieces (Bar&, size_t bar_index, int staff, std::vector<Seg> const&);
+	void build_bar_pieces (std::vector<Piece>& out, size_t bar_index, int staff, std::vector<Seg> const&);
 
-	/* triplets: beats (index from the first bar) written as eighth-note triplets */
-	std::set<int64_t> _triplet_beats[2];
+	/* tuplets: beats (index from the first bar) divided in 3 (eighth
+	 * triplets), 5 (quintuplets) or 6 (sixteenth triplets) */
+	std::map<int64_t, int> _beat_div[2];
 	int64_t beat_ticks () const;
-	bool    triplet_beat (int staff, int64_t abs_tick) const;
-	/** notatable pieces (start, len, tuplet) of a duration inside one bar */
-	std::vector<std::pair<std::pair<int64_t, int64_t>, bool>> split_piece (size_t bar_index, int staff, int64_t start, int64_t len, bool dots) const;
+	int     beat_div (int staff, int64_t abs_tick) const;
+	/** notatable pieces (start, len, tuplet division) of a duration inside one bar */
+	std::vector<std::pair<std::pair<int64_t, int64_t>, int>> split_piece (size_t bar_index, int staff, int64_t start, int64_t len, bool dots) const;
 	static void piece_value (Piece const&, int64_t& base, bool& dotted);
+
+	/* key signature: number of sharps (> 0) or flats (< 0) */
+	int    _fifths;
+	double key_width () const;
 
 	double system_height () const;
 	double staff_y (System const&, int staff) const;

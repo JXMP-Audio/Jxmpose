@@ -36,7 +36,10 @@ Ardour project.
   In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and
   click notes into the staff; click or drag notes to select and move them,
   pick a value to change their length, Delete removes, Up/Down transposes,
-  Ctrl+Z undoes. Eighth-note triplets are recognised and written as such.
+  Ctrl+Z undoes. Triplets, sixteenth triplets and quintuplets are recognised
+  from the MIDI and written as such, overlapping lines become a second voice,
+  and the key signature comes from the track's key or is guessed from the
+  notes.
 
 ## Building
 

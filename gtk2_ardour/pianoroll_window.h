@@ -81,9 +81,11 @@ private:
 	std::vector<std::pair<ArdourWidgets::ArdourButton*, int64_t>> note_value_buttons;
 	ArdourWidgets::ArdourButton dot_button;
 	ArdourWidgets::ArdourButton triplet_button;
+	ArdourWidgets::ArdourButton quint_button;
 	int64_t _note_base;    ///< picked value, 0: select
 	bool    _note_dot;
 	bool    _note_triplet;
+	bool    _note_quint;
 	/** pick a note value; with notes selected it also sets their length */
 	void set_note_value (int64_t ticks);
 	void apply_note_value (bool to_selection);
