@@ -39,6 +39,7 @@
 #include "gtkmm2ext/utils.h"
 #include "gtkmm2ext/doi.h"
 
+#include "gtkmm2ext/cairo_theme.h"
 #include "widgets/tooltips.h"
 
 #include "ardour/plugin_manager.h"
@@ -326,7 +327,7 @@ AddRouteDialog::AddRouteDialog ()
 	outer_box->pack_start (show_on_cue_chkbox, false, false);
 
 	/* quick-add button (add item but don't close dialog) */
-	Gtk::Button* addnoclose_button = manage (new Gtk::Button(_("Add selected items (and leave dialog open)")));
+	Gtk::Button* addnoclose_button = manage (new Gtk::Button(Gtkmm2ext::CairoTheme::studio_widgets () ? _("Add (keep open)") : _("Add selected items (and leave dialog open)")));
 	addnoclose_button->set_can_default ();
 	addnoclose_button->signal_clicked ().connect (sigc::bind (sigc::mem_fun (*this, &Gtk::Dialog::response), Add));
 	outer_box->pack_end (*addnoclose_button, false, false);
@@ -349,11 +350,19 @@ AddRouteDialog::AddRouteDialog ()
 
 	show_all_children ();
 
+	if (Gtkmm2ext::CairoTheme::studio_widgets ()) {
+		/* studio look: compact dialog; the type description becomes a tooltip of the list */
+		trk_template_desc_frame.hide ();
+		trk_template_desc_frame.set_no_show_all ();
+		trk_template_chooser.set_headers_visible (false);
+		trk_template_chooser.set_size_request (-1, 260);
+	}
+
 	/* track template info will be managed whenever
 	 * this dialog is shown, via ::on_show()
 	 */
 
-	add_button (_("Add and Close"), AddAndClose);
+	add_button (Gtkmm2ext::CairoTheme::studio_widgets () ? _("Add Track") : _("Add and Close"), AddAndClose);
 	set_response_sensitive (AddAndClose, true);
 	set_default_response (AddAndClose);
 
@@ -392,6 +401,9 @@ AddRouteDialog::trk_template_row_selected ()
 
 	string d = (*iter)[track_template_columns.description];
 	trk_template_desc.get_buffer ()->set_text (d);
+	if (Gtkmm2ext::CairoTheme::studio_widgets ()) {
+		ArdourWidgets::set_tooltip (trk_template_chooser, d);
+	}
 
 	const string n = (*iter)[track_template_columns.name];
 	const string p = (*iter)[track_template_columns.path];
