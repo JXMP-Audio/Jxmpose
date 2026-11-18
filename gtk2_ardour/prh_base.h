@@ -94,7 +94,7 @@ class PianoRollHeaderBase : virtual public sigc::trackable {
 	double _saved_bottom_val;
 	mutable bool _mini_map_display;
 	bool entered;
-	static const int kbd_width = 20;
+	int kbd_width; ///< width of the piano keys (unscaled)
 
 	// void on_size_request(Gtk::Requisition*);
 

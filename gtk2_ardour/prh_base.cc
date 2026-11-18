@@ -98,6 +98,7 @@ PianoRollHeaderBase::PianoRollHeaderBase (MidiViewBackground& bg)
 	, entered (false)
 	, have_note_names (false)
 {
+	kbd_width = 20;
 	for (int i = 0; i < 128; ++i) {
 		_active_notes[i] = false;
 	}

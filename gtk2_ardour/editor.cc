@@ -5808,6 +5808,7 @@ Editor::setup_studio_editor_list ()
 	/* compact: just the arrow, so the right zone can be narrow */
 	_studio_list_more.set_text ("");
 	_studio_list_more.set_sizing_texts ({ "" });
+	_studio_list_more.set_size_request (18 * UIConfiguration::instance ().get_ui_scale (), -1);
 	set_tooltip (_studio_list_more, _("All sidebar pages"));
 	tabrow->pack_start (_studio_list_more, false, false);
 

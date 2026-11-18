@@ -46,6 +46,7 @@
 
 #include "gtkmm2ext/application.h"
 #include "gtkmm2ext/bindings.h"
+#include "gtkmm2ext/cairo_theme.h"
 #include "gtkmm2ext/gtk_ui.h"
 #include "gtkmm2ext/menu_elems.h"
 #include "gtkmm2ext/utils.h"
@@ -743,6 +744,9 @@ ApplicationBar::action_script_changed (int i, const std::string& n)
 		} else {
 			_action_script_call_btn[i].set_text (n.substr(0,1));
 		}
+		if (Gtkmm2ext::CairoTheme::studio_widgets ()) {
+			parameter_changed ("action-table-columns");
+		}
 	}
 
 	std::string const a = string_compose (X_("script-%1"), i + 1);
@@ -989,7 +993,11 @@ ApplicationBar::parameter_changed (std::string p)
 		const uint32_t cols = UIConfiguration::instance().get_action_table_columns ();
 		for (int i = 0; i < MAX_LUA_ACTION_BUTTONS; ++i) {
 			const int col = i / 2;
-			if (cols & (1<<col)) {
+			std::string name;
+			/* studio look: no placeholder buttons for unassigned scripts
+			 * (scripts are assigned in Window > Scripting) */
+			bool const unset = Gtkmm2ext::CairoTheme::studio_widgets () && !(LuaInstance::instance () && LuaInstance::instance ()->lua_action_name (i, name));
+			if ((cols & (1<<col)) && !unset) {
 				_action_script_call_btn[i].show();
 			} else {
 				_action_script_call_btn[i].hide();

@@ -55,6 +55,8 @@ PianoRollHeader::PianoRollHeader (Item* parent, MidiViewBackground& bg)
 	, PianoRollHeaderBase (bg)
 	, _force_show_scroomer (false)
 {
+	/* the editor window has room for full-length keys */
+	kbd_width = 40;
 	Event.connect (sigc::mem_fun (*this, &PianoRollHeader::event_handler));
 
 	alloc_layouts (_canvas->get_pango_context());
@@ -99,7 +101,8 @@ PianoRollHeader::size_request (double& w, double& h) const
 	if (show_scroomer()) {
 		_scroomer_size = 120.f * UIConfiguration::instance().get_ui_scale();
 	} else {
-		_scroomer_size = kbd_width * UIConfiguration::instance().get_ui_scale();
+		/* key view: only the keyboard, no range scroller */
+		_scroomer_size = 0;
 	}
 
 	w = _scroomer_size + (kbd_width * UIConfiguration::instance().get_ui_scale());
