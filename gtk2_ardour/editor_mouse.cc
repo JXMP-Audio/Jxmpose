@@ -1847,6 +1847,12 @@ Editor::determine_mapping_grid_snap (timepos_t t)
 bool
 Editor::motion_handler (ArdourCanvas::Item* item, GdkEvent* event, bool from_autoscroll)
 {
+	if (!_session || Temporal::superclock_ticks_per_second () == 0) {
+		/* the mouse moved over the editor while a session is still loading (no timeline yet):
+		 * every position conversion would divide by zero */
+		return false;
+	}
+
 	auto mouse_mode = current_mouse_mode ();
 
 	_last_motion_y = event->motion.y;
