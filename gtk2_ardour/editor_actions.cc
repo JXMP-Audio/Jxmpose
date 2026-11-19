@@ -51,6 +51,7 @@
 #include "control_point.h"
 #include "editing.h"
 #include "editor.h"
+#include "note_editor_window.h"
 #include "gui_thread.h"
 #include "luainstance.h"
 #include "main_clock.h"
@@ -1371,6 +1372,9 @@ Editor::register_region_actions ()
 
 	/* Open the pitch shift dialogue for any selected audio regions */
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "pitch-shift-region", _("Pitch Shift..."), sigc::mem_fun (*this, &Editor::pitch_shift_region));
+
+	/* Per-note pitch editing of the selected audio region */
+	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "edit-region-notes", _("Edit Notes..."), [this] () { NoteEditorWindow::open (get_regions_from_selection_and_entered ()); });
 
 	/* Open the transpose dialogue for any selected MIDI regions */
 	register_region_action (_region_actions, RegionActionTarget (SelectedRegions|EnteredRegions), "transpose-region", _("Transpose..."), sigc::mem_fun (*this, &Editor::transpose_region));

@@ -285,7 +285,7 @@ YinUtil::yinProb(const double *yinBuffer, const size_t prior, const size_t yinBu
                 minInd = tau;
             }
             currThreshInd = nThresholdInt-1;
-            while (thresholds[currThreshInd] > yinBuffer[tau] && currThreshInd > -1) {
+            while (currThreshInd > -1 && thresholds[currThreshInd] > yinBuffer[tau]) {
                 // std::cerr << distribution[currThreshInd] << std::endl;
                 peakProb[tau] += distribution[currThreshInd];
                 currThreshInd--;

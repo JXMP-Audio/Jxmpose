@@ -1596,6 +1596,7 @@ Editor::sensitize_the_right_region_actions (bool because_canvas_crossing)
 		_region_actions->get_action("reset-region-gain-envelopes")->set_sensitive (false);
 		_region_actions->get_action("toggle-region-gain-envelope-active")->set_sensitive (false);
 		_region_actions->get_action("pitch-shift-region")->set_sensitive (false);
+		_region_actions->get_action("edit-region-notes")->set_sensitive (false);
 		_region_actions->get_action("strip-region-silence")->set_sensitive (false);
 		_region_actions->get_action("show-rhythm-ferret")->set_sensitive (false);
 		_region_actions->get_action("toggle-region-polarity")->set_sensitive (false);

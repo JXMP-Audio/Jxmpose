@@ -1,0 +1,129 @@
+/*
+ * Copyright (C) 2026 JXMP Audio
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+#pragma once
+
+#include <memory>
+#include <vector>
+
+#include <ytkmm/adjustment.h>
+#include <ytkmm/box.h>
+#include <ytkmm/button.h>
+#include <ytkmm/drawingarea.h>
+#include <ytkmm/label.h>
+#include <ytkmm/scrollbar.h>
+#include <ytkmm/table.h>
+
+#include "ardour_window.h"
+#include "note_edit.h"
+
+namespace ARDOUR {
+	class AudioRegion;
+	class Playlist;
+}
+class RegionSelection;
+
+/** Per-note pitch editor of one audio region: every note of the recording is a blob on a keyboard grid.
+ *  Drag a blob up / down to move its pitch (whole semitones, Alt = free), double-click to put it exactly on
+ *  the nearest semitone. Every change renders the region again (from the original audio) as one undo step. */
+class NoteEditorWindow : public ArdourWindow
+{
+public:
+	static void open (RegionSelection const&);
+
+	NoteEditorWindow (std::shared_ptr<ARDOUR::AudioRegion>);
+	~NoteEditorWindow ();
+
+	std::shared_ptr<ARDOUR::AudioRegion> region () const { return _region; }
+
+private:
+	class Canvas : public Gtk::DrawingArea
+	{
+	public:
+		Canvas (NoteEditorWindow& w) : _w (w) {}
+	protected:
+		bool on_expose_event (GdkEventExpose*);
+		bool on_button_press_event (GdkEventButton*);
+		bool on_button_release_event (GdkEventButton*);
+		bool on_motion_notify_event (GdkEventMotion*);
+		bool on_scroll_event (GdkEventScroll*);
+	private:
+		NoteEditorWindow& _w;
+	};
+
+	std::shared_ptr<ARDOUR::AudioRegion> _region;
+	std::weak_ptr<ARDOUR::Playlist>      _playlist;
+	NoteEdit::Analysis                   _an;
+	std::vector<NoteEdit::Note>          _notes;
+	std::vector<bool>                    _sel;
+
+	Gtk::VBox        _vbox;
+	Gtk::HBox        _toolbar;
+	Gtk::Button      _snap_button;
+	Gtk::Button      _reset_button;
+	Gtk::Button      _zoom_in;
+	Gtk::Button      _zoom_out;
+	Gtk::Label       _status;
+	Gtk::Table       _table;
+	Canvas           _canvas;
+	Gtk::Adjustment  _hadj;
+	Gtk::Adjustment  _vadj;
+	Gtk::HScrollbar  _hscroll;
+	Gtk::VScrollbar  _vscroll;
+
+	double _pps;    ///< pixels per second
+	double _lane;   ///< pixels per semitone
+	float  _hi;     ///< MIDI note at the top of the grid
+	float  _lo;     ///< MIDI note at the bottom of the grid
+
+	/* mouse */
+	enum Drag { NoDrag, PitchDrag, RectDrag };
+	Drag   _drag;
+	int    _grab;
+	double _x0, _y0, _x1, _y1;
+	std::vector<float> _base;
+	bool   _moved;
+
+	sigc::connection _timer;
+	ARDOUR::samplepos_t _last_playhead;
+
+	bool analyse ();
+	void apply (std::string const& what);
+	void session_going_away ();
+
+	/* geometry */
+	double key_width () const { return 46; }
+	double ruler_height () const { return 20; }
+	double x_of (ARDOUR::samplepos_t master_pos) const;
+	double y_of (float midi) const;
+	float  midi_at (double y) const;
+	int    note_at (double x, double y) const;
+	void   update_adjustments ();
+	void   zoom (double factor, double around_x);
+
+	void draw (cairo_t*, int w, int h);
+	void snap_selected ();
+	void reset_selected ();
+	void shift_selected (float semitones);
+	bool on_key_press_event (GdkEventKey*);
+	void tick ();
+	void follow_undo ();
+	void load_region_notes ();
+
+	friend class Canvas;
+};
