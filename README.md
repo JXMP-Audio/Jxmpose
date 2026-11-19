@@ -67,7 +67,10 @@ Ardour project.
   along. Double-click puts a note exactly on the nearest semitone, S splits
   the note under the mouse, M merges the selected ones, Left / Right nudge
   by 10 ms; Snap to Semitone, Reset Pitch and Reset Timing work on the
-  selection or on all notes (also in the right-click menu). Only the audio
+  selection or on all notes (also in the right-click menu). Correct Pitch…
+  moves notes towards the nearest semitone and flattens their pitch drift
+  by an amount (vibrato stays); Level and Formant set the loudness and the
+  formants (voice character) of the selected notes. Only the audio
   around moved notes is time-stretched, each re-pitched note is shifted on
   its own with formants preserved (Rubber Band R3) and crossfaded into the
   untouched audio; the original recording is never changed, every edit is

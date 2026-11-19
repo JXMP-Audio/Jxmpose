@@ -28,6 +28,7 @@
 #include <ytkmm/label.h>
 #include <ytkmm/menu.h>
 #include <ytkmm/scrollbar.h>
+#include <ytkmm/spinbutton.h>
 #include <ytkmm/table.h>
 
 #include "ardour_window.h"
@@ -80,6 +81,16 @@ private:
 	Gtk::Button      _snap_button;
 	Gtk::Button      _reset_button;
 	Gtk::Button      _reset_time_button;
+	Gtk::Button      _correct_button;
+	Gtk::Label       _gain_label;
+	Gtk::Adjustment  _gain_adj;
+	Gtk::SpinButton  _gain_spin;
+	Gtk::Label       _formant_label;
+	Gtk::Adjustment  _formant_adj;
+	Gtk::SpinButton  _formant_spin;
+	bool             _syncing;
+	std::vector<bool> _synced_sel;
+	sigc::connection _spin_timeout;
 	Gtk::Menu        _menu;
 	Gtk::Button      _zoom_in;
 	Gtk::Button      _zoom_out;
@@ -133,6 +144,9 @@ private:
 	void split_at (int note, ARDOUR::samplepos_t out_pos);
 	void merge_selected ();
 	void reset_time ();
+	void correct_pitch_dialog ();
+	void sync_note_controls ();
+	void note_controls_changed ();
 	void popup_menu (int note, GdkEventButton*);
 	void update_status (std::string const& hint = std::string ());
 	bool any_selected () const;

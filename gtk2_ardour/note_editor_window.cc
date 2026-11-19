@@ -22,6 +22,9 @@
 #include <cstdlib>
 
 #include <ydk/gdkkeysyms.h>
+#include <ytkmm/dialog.h>
+#include <ytkmm/scale.h>
+#include <ytkmm/stock.h>
 
 #include "pbd/stateful_diff_command.h"
 
@@ -76,6 +79,14 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	, _snap_button (_("Snap to Semitone"))
 	, _reset_button (_("Reset Pitch"))
 	, _reset_time_button (_("Reset Timing"))
+	, _correct_button (_("Correct Pitch..."))
+	, _gain_label (_("Level"))
+	, _gain_adj (0, -30, 12, 0.5, 3)
+	, _gain_spin (_gain_adj, 0.5, 1)
+	, _formant_label (_("Formant"))
+	, _formant_adj (0, -12, 12, 0.5, 2)
+	, _formant_spin (_formant_adj, 0.5, 1)
+	, _syncing (false)
 	, _zoom_in ("+")
 	, _zoom_out ("−")
 	, _table (2, 2)
@@ -98,7 +109,7 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	set_session (&r->session ());
 
 	_snap_button.set_tooltip_text (_("Put the selected notes (all when none is selected) exactly on the nearest semitone"));
-	_reset_button.set_tooltip_text (_("Back to the pitch they were sung at"));
+	_reset_button.set_tooltip_text (_("Back to the pitch they were sung at (also undoes drift correction and formant shift)"));
 	_snap_button.signal_clicked ().connect (sigc::mem_fun (*this, &NoteEditorWindow::snap_selected));
 	_reset_button.signal_clicked ().connect (sigc::mem_fun (*this, &NoteEditorWindow::reset_selected));
 	_reset_time_button.set_tooltip_text (_("Put the selected notes (all when none is selected) back where they were played, with their original length"));
@@ -111,7 +122,19 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	_toolbar.pack_start (_snap_button, false, false);
 	_toolbar.pack_start (_reset_button, false, false);
 	_toolbar.pack_start (_reset_time_button, false, false);
-	_toolbar.pack_start (_status, true, true);
+	_toolbar.pack_start (_correct_button, false, false);
+	_toolbar.pack_start (_gain_label, false, false, 4);
+	_toolbar.pack_start (_gain_spin, false, false);
+	_toolbar.pack_start (_formant_label, false, false, 4);
+	_toolbar.pack_start (_formant_spin, false, false);
+	_correct_button.set_tooltip_text (_("Move the selected notes (all when none is selected) towards the nearest semitone and flatten their pitch drift, by an amount"));
+	_correct_button.signal_clicked ().connect (sigc::mem_fun (*this, &NoteEditorWindow::correct_pitch_dialog));
+	_gain_spin.set_tooltip_text (_("Level of the selected notes, dB"));
+	_formant_spin.set_tooltip_text (_("Formants of the selected notes, semitones: up = smaller, brighter voice, down = bigger, darker voice"));
+	_gain_adj.signal_value_changed ().connect (sigc::mem_fun (*this, &NoteEditorWindow::note_controls_changed));
+	_formant_adj.signal_value_changed ().connect (sigc::mem_fun (*this, &NoteEditorWindow::note_controls_changed));
+	_gain_spin.set_sensitive (false);
+	_formant_spin.set_sensitive (false);
 	_toolbar.pack_end (_zoom_in, false, false);
 	_toolbar.pack_end (_zoom_out, false, false);
 	_status.set_alignment (0.0, 0.5);
@@ -129,6 +152,8 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 
 	_vbox.pack_start (_toolbar, false, false);
 	_vbox.pack_start (_table, true, true);
+	_status.set_padding (6, 3);
+	_vbox.pack_start (_status, false, false);
 	add (_vbox);
 	set_default_size (1000, 520);
 
@@ -143,6 +168,7 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 NoteEditorWindow::~NoteEditorWindow ()
 {
 	_timer.disconnect ();
+	_spin_timeout.disconnect ();
 	windows.remove (this);
 }
 
@@ -203,6 +229,7 @@ NoteEditorWindow::load_region_notes ()
 		_notes = _an.notes;
 	}
 	_sel.assign (_notes.size (), false);
+	sync_note_controls ();
 }
 
 void
@@ -406,6 +433,12 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 		if (xe < kw || xs > w) {
 			continue;
 		}
+		const double gscale = std::pow (10.0, n.gain / 20.0);
+		samplepos_t   df0 = 0;
+		vector<float> dev;
+		if (n.drift > 0.001f) {
+			dev = NoteEdit::drift_curve (_an, n, df0);
+		}
 		/* source frame -> x where it plays now */
 		auto fx = [&] (samplepos_t f) { return std::max (xs, std::min (xe, x_of ((samplepos_t) llrint (n.to_out (_an.origin + f * _an.hop))))); };
 		const double yc = y_of (n.target ());
@@ -416,12 +449,12 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 		cairo_move_to (cr, xs, yc);
 		for (samplepos_t f = f0; f <= f1; ++f) {
 			const double x = fx (f);
-			cairo_line_to (cr, x, yc - std::max (2.0, _an.rms[f] * _lane * 0.8));
+			cairo_line_to (cr, x, yc - std::max (2.0, std::min (1.5, _an.rms[f] * gscale) * _lane * 0.8));
 		}
 		cairo_line_to (cr, xe, yc);
 		for (samplepos_t f = f1; f >= f0; --f) {
 			const double x = fx (f);
-			cairo_line_to (cr, x, yc + std::max (2.0, _an.rms[f] * _lane * 0.8));
+			cairo_line_to (cr, x, yc + std::max (2.0, std::min (1.5, _an.rms[f] * gscale) * _lane * 0.8));
 			if (f == 0) {
 				break;
 			}
@@ -444,7 +477,11 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 				continue;
 			}
 			const double x = fx (f);
-			const double y = y_of (_an.midi[f] + n.shift);
+			double m = _an.midi[f] + n.shift;
+			if (!dev.empty () && f >= df0 && f - df0 < (samplepos_t) dev.size ()) {
+				m -= n.drift * dev[f - df0];
+			}
+			const double y = y_of (m);
 			if (pen) {
 				cairo_line_to (cr, x, y);
 			} else {
@@ -455,6 +492,17 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 		set_rgb (cr, 0xffffff, 0.75);
 		cairo_set_line_width (cr, 1.2);
 		cairo_stroke (cr);
+
+		/* formant shift: a small tag above the note */
+		if (n.formant > 0.01f || n.formant < -0.01f) {
+			cairo_select_font_face (cr, "Barlow", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+			cairo_set_font_size (cr, 9);
+			set_rgb (cr, 0xffd090, 0.9);
+			cairo_move_to (cr, xs + 2, yc - _lane * 0.9);
+			char buf[16];
+			snprintf (buf, sizeof (buf), "F%+.1f", n.formant);
+			cairo_show_text (cr, buf);
+		}
 
 		/* where it was played: a faint bracket under the note */
 		if (n.time_edited ()) {
@@ -762,9 +810,11 @@ NoteEditorWindow::reset_selected ()
 	const bool any = std::find (_sel.begin (), _sel.end (), true) != _sel.end ();
 	bool changed   = false;
 	for (size_t k = 0; k < _notes.size (); ++k) {
-		if ((!any || _sel[k]) && _notes[k].shift != 0) {
-			_notes[k].shift = 0;
-			changed         = true;
+		if ((!any || _sel[k]) && (_notes[k].shift != 0 || _notes[k].drift != 0 || _notes[k].formant != 0)) {
+			_notes[k].shift   = 0;
+			_notes[k].drift   = 0;
+			_notes[k].formant = 0;
+			changed           = true;
 		}
 	}
 	if (changed) {
@@ -862,6 +912,103 @@ NoteEditorWindow::on_key_press_event (GdkEventKey* ev)
 			break;
 	}
 	return ArdourWindow::on_key_press_event (ev);
+}
+
+void
+NoteEditorWindow::sync_note_controls ()
+{
+	/* the level / formant fields show the first selected note */
+	_synced_sel = _sel;
+	int first = -1;
+	for (size_t k = 0; k < _sel.size (); ++k) {
+		if (_sel[k]) {
+			first = k;
+			break;
+		}
+	}
+	_syncing = true;
+	_gain_adj.set_value (first >= 0 ? _notes[first].gain : 0);
+	_formant_adj.set_value (first >= 0 ? _notes[first].formant : 0);
+	_syncing = false;
+	_gain_spin.set_sensitive (first >= 0);
+	_formant_spin.set_sensitive (first >= 0);
+}
+
+void
+NoteEditorWindow::note_controls_changed ()
+{
+	if (_syncing || !any_selected ()) {
+		return;
+	}
+	for (size_t k = 0; k < _notes.size (); ++k) {
+		if (_sel[k]) {
+			_notes[k].gain    = _gain_adj.get_value ();
+			_notes[k].formant = _formant_adj.get_value ();
+		}
+	}
+	_canvas.queue_draw ();
+	/* clicking the arrows a few times renders once */
+	_spin_timeout.disconnect ();
+	_spin_timeout = Glib::signal_timeout ().connect ([this] () { apply (_("change note level / formant")); return false; }, 600);
+}
+
+void
+NoteEditorWindow::correct_pitch_dialog ()
+{
+	Gtk::Dialog d (_("Correct Pitch"), *this, true);
+	Gtk::Label  l1 (_("Pitch center: how far each note moves to the nearest semitone"));
+	Gtk::Label  l2 (_("Pitch drift: how much of the slow wandering inside each note is flattened (vibrato stays)"));
+	Gtk::Adjustment a1 (100, 0, 100, 1, 10), a2 (0, 0, 100, 1, 10);
+	Gtk::HScale s1 (a1), s2 (a2);
+	l1.set_alignment (0, 0.5);
+	l2.set_alignment (0, 0.5);
+	s1.set_digits (0);
+	s2.set_digits (0);
+	s1.set_value_pos (Gtk::POS_RIGHT);
+	s2.set_value_pos (Gtk::POS_RIGHT);
+	s1.set_size_request (320, -1);
+	/* start from the drift of the selection */
+	for (size_t k = 0; k < _notes.size (); ++k) {
+		if (!any_selected () || _sel[k]) {
+			a2.set_value (_notes[k].drift * 100);
+			break;
+		}
+	}
+	Gtk::VBox* vb = d.get_vbox ();
+	vb->set_spacing (4);
+	vb->set_border_width (8);
+	vb->pack_start (l1, false, false);
+	vb->pack_start (s1, false, false);
+	vb->pack_start (l2, false, false);
+	vb->pack_start (s2, false, false);
+	d.add_button (Gtk::Stock::CANCEL, Gtk::RESPONSE_CANCEL);
+	d.add_button (_("Correct"), Gtk::RESPONSE_OK);
+	d.set_default_response (Gtk::RESPONSE_OK);
+	d.show_all ();
+	if (d.run () != Gtk::RESPONSE_OK) {
+		return;
+	}
+	d.hide ();
+	const float center = a1.get_value () / 100.f;
+	const float drift  = a2.get_value () / 100.f;
+	const bool  any    = any_selected ();
+	bool changed       = false;
+	for (size_t k = 0; k < _notes.size (); ++k) {
+		if (any && !_sel[k]) {
+			continue;
+		}
+		NoteEdit::Note& n = _notes[k];
+		const float t     = n.target ();
+		const float s     = n.shift + (std::round (t) - t) * center;
+		if (std::fabs (s - n.shift) > 1e-4f || std::fabs (drift - n.drift) > 1e-4f) {
+			n.shift = s;
+			n.drift = drift;
+			changed = true;
+		}
+	}
+	if (changed) {
+		apply (_("correct pitch"));
+	}
 }
 
 /** the output timing is usable: every note long enough, in the analysed range, in order and not overlapping */
@@ -1082,7 +1229,7 @@ NoteEditorWindow::apply (std::string const& what)
 
 	Gdk::Cursor wait (Gdk::WATCH);
 	get_window ()->set_cursor (wait);
-	NoteEdit::Filter f (*_session, _notes);
+	NoteEdit::Filter f (*_session, _notes, _an);
 	const int rv = _region->apply (f, 0);
 	get_window ()->set_cursor ();
 	if (rv != 0 || f.results.empty ()) {
@@ -1128,6 +1275,9 @@ NoteEditorWindow::tick ()
 		return;
 	}
 	follow_undo ();
+	if (_sel != _synced_sel) {
+		sync_note_controls ();
+	}
 	const samplepos_t ph = _session->audible_sample ();
 	if (ph != _last_playhead) {
 		_last_playhead = ph;

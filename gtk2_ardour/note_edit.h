@@ -24,7 +24,8 @@
  * becomes an editable object with a pitch offset and an output position / length. Rendering never touches
  * the original recording: the region always reads from its master (original) sources, the stretches around
  * moved notes are time-stretched with key frames at the note edges, then every re-pitched note is shifted
- * on its own with a constant ratio (Rubber Band R3, formants preserved) and crossfaded into the audio.
+ * on its own with a constant ratio (Rubber Band R3, formants preserved or shifted), its slow pitch drift is
+ * flattened by reading it at a varying rate (windowed sinc), and it is crossfaded into the audio with its level.
  * The edits live in the region's extra XML ("JXNoteEdit"), in master-source sample positions, so they
  * survive trims and can be reopened.
  */
@@ -55,12 +56,16 @@ struct Note {
 	ARDOUR::samplepos_t oend;
 	float pitch;                ///< detected pitch centre, MIDI note number (fractional)
 	float shift;                ///< edit, semitones
+	float drift;                ///< 0..1: how much of the slow pitch drift inside the note is flattened (vibrato stays)
+	float gain;                 ///< dB
+	float formant;              ///< formant shift, semitones (0 = formants stay where they were sung)
 
-	Note () : start (0), end (0), ostart (0), oend (0), pitch (0), shift (0) {}
+	Note () : start (0), end (0), ostart (0), oend (0), pitch (0), shift (0), drift (0), gain (0), formant (0) {}
 	float target () const { return pitch + shift; }
-	bool pitch_edited () const { return shift > 0.001f || shift < -0.001f; }
+	bool pitch_edited () const { return shift > 0.001f || shift < -0.001f || drift > 0.001f || formant > 0.001f || formant < -0.001f; }
 	bool time_edited () const { return ostart != start || oend != end; }
-	bool edited () const { return pitch_edited () || time_edited (); }
+	bool gain_edited () const { return gain > 0.01f || gain < -0.01f; }
+	bool edited () const { return pitch_edited () || time_edited () || gain_edited (); }
 	/** output position of a source position inside the note */
 	double to_out (double src) const { return end > start ? ostart + (src - start) * (double) (oend - ostart) / (end - start) : ostart; }
 	double to_src (double out) const { return oend > ostart ? start + (out - ostart) * (double) (end - start) / (oend - ostart) : start; }
@@ -83,6 +88,10 @@ struct Analysis {
 /** Pitch centre (median of the pitch track) between two master-source positions; `fallback` without voiced frames */
 float median_pitch (Analysis const&, ARDOUR::samplepos_t start, ARDOUR::samplepos_t end, float fallback);
 
+/** Slow pitch deviation from the note's centre per analysis frame (semitones, frames f0 .. f1 of the note;
+ *  unvoiced frames are bridged). Vibrato is averaged out, this is what drift correction removes. */
+std::vector<float> drift_curve (Analysis const&, Note const&, ARDOUR::samplepos_t& f0);
+
 /** Master-source range the region plays (start, length) */
 void region_master_range (std::shared_ptr<ARDOUR::AudioRegion>, ARDOUR::samplepos_t& start, ARDOUR::samplecnt_t& len);
 
@@ -101,17 +110,18 @@ XMLNode* notes_to_xml (std::vector<Note> const&);
  *  note edges), everything else stays untouched. Then the pitch: each note is shifted with its own constant
  *  ratio and crossfaded in over 10 ms centred on its (output) edges. */
 void render (std::vector<std::vector<float> > const& in, ARDOUR::samplepos_t origin, ARDOUR::samplecnt_t sr,
-             std::vector<Note> const&, std::vector<std::vector<float> >& out);
+             std::vector<Note> const&, Analysis const&, std::vector<std::vector<float> >& out);
 
 /** Makes a new region of the edited audio (new sources, master sources = the originals) */
 class Filter : public ARDOUR::Filter
 {
 public:
-	Filter (ARDOUR::Session& s, std::vector<Note> const& notes) : ARDOUR::Filter (s), _notes (notes) {}
+	Filter (ARDOUR::Session& s, std::vector<Note> const& notes, Analysis const& an) : ARDOUR::Filter (s), _notes (notes), _an (an) {}
 	int run (std::shared_ptr<ARDOUR::Region>, PBD::Progress* progress = 0);
 
 private:
 	std::vector<Note> _notes;
+	Analysis          _an;
 };
 
 } // namespace NoteEdit

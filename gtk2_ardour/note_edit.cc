@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 
 #include <rubberband/RubberBandStretcher.h>
@@ -90,6 +91,69 @@ median_pitch (Analysis const& a, samplepos_t start, samplepos_t end, float fallb
 	}
 	std::nth_element (v.begin (), v.begin () + v.size () / 2, v.end ());
 	return v[v.size () / 2];
+}
+
+vector<float>
+drift_curve (Analysis const& a, Note const& n, samplepos_t& f0)
+{
+	vector<float> dev;
+	if (a.midi.empty ()) {
+		f0 = 0;
+		return dev;
+	}
+	f0 = std::max ((samplepos_t) 0, (n.start - a.origin) / a.hop);
+	const samplepos_t f1 = std::min ((samplepos_t) a.midi.size () - 1, (n.end - a.origin) / a.hop);
+	if (f1 < f0) {
+		return dev;
+	}
+	const size_t  len = f1 - f0 + 1;
+	vector<float> p (len, 0.f);
+	/* bridge unvoiced frames: hold the last voiced value, before the first one use the first one */
+	float last = -1;
+	for (size_t k = 0; k < len; ++k) {
+		const float m = a.midi[f0 + k];
+		if (m > 0 && std::fabs (m - n.pitch) < 3) { /* octave errors are not drift */
+			last = m;
+		}
+		p[k] = last;
+	}
+	float first = n.pitch;
+	for (size_t k = 0; k < len; ++k) {
+		if (p[k] >= 0) {
+			first = p[k];
+			break;
+		}
+	}
+	for (size_t k = 0; k < len && p[k] < 0; ++k) {
+		p[k] = first;
+	}
+	/* moving average over ~200 ms: vibrato (5..7 Hz) averages out, the slow drift stays */
+	const int half = std::max (1, (int) (0.1 * a.sr / a.hop));
+	dev.resize (len);
+	double sum = 0;
+	int    cnt = 0;
+	int    lo = 0, hi = -1;
+	for (int k = 0; k < (int) len; ++k) {
+		while (hi < std::min ((int) len - 1, k + half)) {
+			sum += p[++hi];
+			++cnt;
+		}
+		while (lo < k - half) {
+			sum -= p[lo++];
+			--cnt;
+		}
+		dev[k] = sum / cnt;
+	}
+	/* drift is the wandering around the note's own centre: the centre itself is left to the pitch edit */
+	double mean = 0;
+	for (float d : dev) {
+		mean += d;
+	}
+	mean /= len;
+	for (float& d : dev) {
+		d -= mean;
+	}
+	return dev;
 }
 
 int
@@ -236,6 +300,9 @@ notes_to_xml (vector<Note> const& notes)
 		XMLNode* c = new XMLNode ("Note");
 		c->set_property ("start", n.start);
 		c->set_property ("end", n.end);
+		c->set_property ("drift", n.drift);
+		c->set_property ("gain", n.gain);
+		c->set_property ("formant", n.formant);
 		c->set_property ("ostart", n.ostart);
 		c->set_property ("oend", n.oend);
 		c->set_property ("pitch", n.pitch);
@@ -257,6 +324,9 @@ load_notes (std::shared_ptr<Region const> r, vector<Note>& notes)
 		Note n;
 		if (c->get_property ("start", n.start) && c->get_property ("end", n.end) && c->get_property ("pitch", n.pitch)) {
 			c->get_property ("shift", n.shift);
+			c->get_property ("drift", n.drift);
+			c->get_property ("gain", n.gain);
+			c->get_property ("formant", n.formant);
 			if (!c->get_property ("ostart", n.ostart) || !c->get_property ("oend", n.oend)) {
 				n.ostart = n.start;
 				n.oend   = n.end;
@@ -269,8 +339,8 @@ load_notes (std::shared_ptr<Region const> r, vector<Note>& notes)
 
 /** One span of all channels shifted by a constant ratio; same length and timing as the input */
 static void
-shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len, samplecnt_t sr, double ratio,
-            vector<vector<float> >& out)
+shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len, samplecnt_t sr,
+            double ratio, double formant_semitones, vector<vector<float> >& out)
 {
 	using namespace RubberBand;
 	const size_t nch = in.size ();
@@ -280,6 +350,10 @@ shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len,
 	                        RubberBandStretcher::OptionProcessRealTime | RubberBandStretcher::OptionEngineFiner |
 	                        RubberBandStretcher::OptionFormantPreserved | RubberBandStretcher::OptionChannelsTogether);
 	rb.setPitchScale (ratio);
+	if (formant_semitones != 0) {
+		/* preserved formants would be scaled by 1 / ratio; move them on top of that */
+		rb.setFormantScale (std::pow (2.0, formant_semitones / 12.0) / ratio);
+	}
 
 	const int        block = 1024;
 	vector<float*>   ptrs (nch);
@@ -337,6 +411,48 @@ shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len,
 	}
 	for (size_t c = 0; c < nch; ++c) {
 		out[c].resize (len, 0.f);
+	}
+}
+
+/** Windowed-sinc read of `x` at a fractional position */
+static inline float
+read_frac (vector<float> const& x, double pos)
+{
+	static const int taps = 8; /* per side */
+	const long       i0   = (long) std::floor (pos);
+	const double     fr   = pos - i0;
+	double           acc  = 0;
+	for (int k = -taps + 1; k <= taps; ++k) {
+		const long j = i0 + k;
+		if (j < 0 || j >= (long) x.size ()) {
+			continue;
+		}
+		const double d = k - fr;
+		const double w = d == 0 ? 1.0 : std::sin (M_PI * d) / (M_PI * d) * std::sin (M_PI * d / taps) / (M_PI * d / taps);
+		acc += x[j] * w;
+	}
+	return acc;
+}
+
+/** Flatten the drift of one note inside `buf` (samples a .. b): read it at a varying rate, so the pitch follows
+ *  `cents (i)`. The rates are normalised to keep a .. b in place; the time error inside stays at a few ms. */
+static void
+bend_span (vector<vector<float> >& buf, samplepos_t a, samplepos_t b, std::function<double (samplepos_t)> cents)
+{
+	const samplecnt_t len = b - a;
+	if (len < 2) {
+		return;
+	}
+	vector<double> tau (len + 1, 0.0);
+	for (samplecnt_t i = 0; i < len; ++i) {
+		tau[i + 1] = tau[i] + std::pow (2.0, cents (i) / 1200.0);
+	}
+	const double norm = len / tau[len];
+	for (size_t c = 0; c < buf.size (); ++c) {
+		const vector<float> src (buf[c]);
+		for (samplecnt_t i = 0; i < len; ++i) {
+			buf[c][a + i] = read_frac (src, a + tau[i] * norm);
+		}
 	}
 }
 
@@ -465,7 +581,7 @@ time_warp (vector<vector<float> > const& in, samplepos_t origin, samplecnt_t sr,
 
 void
 render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr, vector<Note> const& notes,
-        vector<vector<float> >& out)
+        Analysis const& an, vector<vector<float> >& out)
 {
 	if (raw_in.empty ()) {
 		out = raw_in;
@@ -483,6 +599,11 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 		if (!n.pitch_edited ()) {
 			continue;
 		}
+		samplepos_t   df0 = 0;
+		vector<float> dev;
+		if (n.drift > 0.001f) {
+			dev = drift_curve (an, n, df0);
+		}
 		/* after the time edit the note plays at ostart .. oend */
 		const samplepos_t ns = n.ostart - origin;
 		const samplepos_t ne = n.oend - origin;
@@ -491,7 +612,18 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 		}
 		const samplepos_t s = std::max ((samplepos_t) 0, ns - margin);
 		const samplepos_t e = std::min (len, ne + margin);
-		shift_span (in, s, e - s, sr, std::pow (2.0, n.shift / 12.0), shifted);
+		shift_span (in, s, e - s, sr, std::pow (2.0, n.shift / 12.0), n.formant, shifted);
+		if (!dev.empty ()) {
+			/* drift: bend the note against its slow wandering (interpolated between analysis frames) */
+			const samplepos_t a = std::max (s, ns) - s, b = std::min (e, ne) - s;
+			bend_span (shifted, a, b, [&] (samplepos_t i) {
+				const double src = (n.to_src (origin + s + a + i) - an.origin) / an.hop - df0;
+				const long   f   = (long) std::floor (src);
+				const double fr  = src - f;
+				auto at = [&] (long k) { return dev[std::max (0L, std::min ((long) dev.size () - 1, k))]; };
+				return -100.0 * n.drift * (at (f) * (1 - fr) + at (f + 1) * fr);
+			});
+		}
 
 		/* weight: 1 inside the note, linear ramps of `xfade` centred on its edges */
 		const double a0 = ns - xfade / 2.0;
@@ -502,6 +634,24 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 			const double w = std::max (0.0, std::min (1.0, std::min ((i - a0) / xfade, (b1 - i) / xfade)));
 			for (size_t c = 0; c < out.size (); ++c) {
 				out[c][i] = out[c][i] * (1.0 - w) + shifted[c][i - s] * w;
+			}
+		}
+	}
+
+	/* level per note, with the same ramps on its edges */
+	for (auto const& n : notes) {
+		if (!n.gain_edited ()) {
+			continue;
+		}
+		const double      g  = std::pow (10.0, n.gain / 20.0);
+		const double      a0 = n.ostart - origin - xfade / 2.0;
+		const double      b1 = n.oend - origin + xfade / 2.0;
+		const samplepos_t ws = std::max ((samplepos_t) 0, (samplepos_t) std::floor (a0));
+		const samplepos_t we = std::min (len, (samplepos_t) std::ceil (b1));
+		for (samplepos_t i = ws; i < we; ++i) {
+			const double w = std::max (0.0, std::min (1.0, std::min ((i - a0) / xfade, (b1 - i) / xfade)));
+			for (size_t c = 0; c < out.size (); ++c) {
+				out[c][i] *= 1.0 + w * (g - 1.0);
 			}
 		}
 	}
@@ -531,7 +681,7 @@ Filter::run (std::shared_ptr<Region> region, Progress* progress)
 	if (progress) {
 		progress->set_progress (0.1);
 	}
-	render (in, start, session.sample_rate (), _notes, out);
+	render (in, start, session.sample_rate (), _notes, _an, out);
 	if (progress) {
 		progress->set_progress (0.8);
 	}
