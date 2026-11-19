@@ -26,6 +26,7 @@
 #include <ytkmm/button.h>
 #include <ytkmm/drawingarea.h>
 #include <ytkmm/label.h>
+#include <ytkmm/menu.h>
 #include <ytkmm/scrollbar.h>
 #include <ytkmm/table.h>
 
@@ -38,9 +39,11 @@ namespace ARDOUR {
 }
 class RegionSelection;
 
-/** Per-note pitch editor of one audio region: every note of the recording is a blob on a keyboard grid.
- *  Drag a blob up / down to move its pitch (whole semitones, Alt = free), double-click to put it exactly on
- *  the nearest semitone. Every change renders the region again (from the original audio) as one undo step. */
+/** Per-note editor of one audio region (vocal, bass, any single voice): every note of the recording is a blob
+ *  on a keyboard grid. Drag a blob up / down to move its pitch (whole semitones, Alt = free), sideways to move
+ *  it in time, drag its left / right edge to change its length (notes sung legato stretch with it);
+ *  double-click puts it exactly on the nearest semitone, S splits a note at the mouse, M merges the selected
+ *  ones. Every change renders the region again (from the original audio) as one undo step. */
 class NoteEditorWindow : public ArdourWindow
 {
 public:
@@ -76,6 +79,8 @@ private:
 	Gtk::HBox        _toolbar;
 	Gtk::Button      _snap_button;
 	Gtk::Button      _reset_button;
+	Gtk::Button      _reset_time_button;
+	Gtk::Menu        _menu;
 	Gtk::Button      _zoom_in;
 	Gtk::Button      _zoom_out;
 	Gtk::Label       _status;
@@ -92,12 +97,14 @@ private:
 	float  _lo;     ///< MIDI note at the bottom of the grid
 
 	/* mouse */
-	enum Drag { NoDrag, PitchDrag, RectDrag };
+	enum Drag { NoDrag, Undecided, PitchDrag, TimeDrag, StartDrag, EndDrag, RectDrag };
 	Drag   _drag;
 	int    _grab;
 	double _x0, _y0, _x1, _y1;
 	std::vector<float> _base;
+	std::vector<NoteEdit::Note> _base_notes;
 	bool   _moved;
+	double _mouse_x, _mouse_y;
 
 	sigc::connection _timer;
 	ARDOUR::samplepos_t _last_playhead;
@@ -113,6 +120,8 @@ private:
 	double y_of (float midi) const;
 	float  midi_at (double y) const;
 	int    note_at (double x, double y) const;
+	int    edge_at (double x, double y, int& note) const; ///< -1 left edge, 1 right edge, 0 none
+	ARDOUR::samplepos_t pos_at (double x) const;
 	void   update_adjustments ();
 	void   zoom (double factor, double around_x);
 
@@ -120,6 +129,13 @@ private:
 	void snap_selected ();
 	void reset_selected ();
 	void shift_selected (float semitones);
+	bool time_edit (Drag, ARDOUR::samplecnt_t delta);
+	void split_at (int note, ARDOUR::samplepos_t out_pos);
+	void merge_selected ();
+	void reset_time ();
+	void popup_menu (int note, GdkEventButton*);
+	void update_status (std::string const& hint = std::string ());
+	bool any_selected () const;
 	bool on_key_press_event (GdkEventKey*);
 	void tick ();
 	void follow_undo ();

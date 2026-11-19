@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 #include <rubberband/RubberBandStretcher.h>
 #include <vamp-hostsdk/PluginLoader.h>
@@ -71,6 +72,24 @@ read_master (std::shared_ptr<AudioRegion> r, samplepos_t start, samplecnt_t len,
 		}
 	}
 	return true;
+}
+
+float
+median_pitch (Analysis const& a, samplepos_t start, samplepos_t end, float fallback)
+{
+	vector<float> v;
+	const samplepos_t f0 = std::max ((samplepos_t) 0, (start - a.origin) / a.hop);
+	const samplepos_t f1 = std::min ((samplepos_t) a.midi.size () - 1, (end - a.origin) / a.hop);
+	for (samplepos_t fr = f0; fr <= f1; ++fr) {
+		if (a.midi[fr] > 0.f) {
+			v.push_back (a.midi[fr]);
+		}
+	}
+	if (v.empty ()) {
+		return fallback;
+	}
+	std::nth_element (v.begin (), v.begin () + v.size () / 2, v.end ());
+	return v[v.size () / 2];
 }
 
 int
@@ -193,19 +212,10 @@ analyse (std::shared_ptr<AudioRegion> r, Analysis& a, Progress* progress)
 			}
 			n.start = a.origin + s;
 			n.end   = a.origin + e;
+			n.ostart = n.start;
+			n.oend   = n.end;
 			/* the pitch centre: the median of the pitch track inside the note (pYIN's note value is rounded) */
-			vector<float> v;
-			for (samplepos_t fr = s / step; fr <= e / (samplepos_t) step && fr < (samplepos_t) frames; ++fr) {
-				if (a.midi[fr] > 0.f) {
-					v.push_back (a.midi[fr]);
-				}
-			}
-			if (!v.empty ()) {
-				std::nth_element (v.begin (), v.begin () + v.size () / 2, v.end ());
-				n.pitch = v[v.size () / 2];
-			} else {
-				n.pitch = hz_to_midi (f.values[0]);
-			}
+			n.pitch = median_pitch (a, n.start, n.end, hz_to_midi (f.values[0]));
 			a.notes.push_back (n);
 		}
 	}
@@ -226,6 +236,8 @@ notes_to_xml (vector<Note> const& notes)
 		XMLNode* c = new XMLNode ("Note");
 		c->set_property ("start", n.start);
 		c->set_property ("end", n.end);
+		c->set_property ("ostart", n.ostart);
+		c->set_property ("oend", n.oend);
 		c->set_property ("pitch", n.pitch);
 		c->set_property ("shift", n.shift);
 		node->add_child_nocopy (*c);
@@ -245,6 +257,10 @@ load_notes (std::shared_ptr<Region const> r, vector<Note>& notes)
 		Note n;
 		if (c->get_property ("start", n.start) && c->get_property ("end", n.end) && c->get_property ("pitch", n.pitch)) {
 			c->get_property ("shift", n.shift);
+			if (!c->get_property ("ostart", n.ostart) || !c->get_property ("oend", n.oend)) {
+				n.ostart = n.start;
+				n.oend   = n.end;
+			}
 			notes.push_back (n);
 		}
 	}
@@ -324,25 +340,152 @@ shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len,
 	}
 }
 
-void
-render (vector<vector<float> > const& in, samplepos_t origin, samplecnt_t sr, vector<Note> const& notes,
-        vector<vector<float> >& out)
+/** Time-stretch [a, b) of `in` so the key points (src -> dst, relative to `in`, both ends identity) are met;
+ *  written into `out` with 10 ms crossfades at a and b (the audio there is not moved, so it lines up) */
+static void
+warp_span (vector<vector<float> > const& in, samplecnt_t sr, vector<std::pair<samplepos_t, samplepos_t> > const& pts,
+           vector<vector<float> >& out)
+{
+	using namespace RubberBand;
+	const size_t      nch    = in.size ();
+	const samplecnt_t len    = in[0].size ();
+	const samplepos_t a      = pts.front ().first;
+	const samplepos_t b      = pts.back ().first;
+	const samplecnt_t margin = sr / 10;
+	const samplepos_t s      = std::max ((samplepos_t) 0, a - margin);
+	const samplepos_t e      = std::min (len, b + margin);
+	const samplecnt_t n      = e - s;
+
+	RubberBandStretcher rb (sr, nch,
+	                        RubberBandStretcher::OptionProcessOffline | RubberBandStretcher::OptionEngineFiner |
+	                        RubberBandStretcher::OptionFormantPreserved | RubberBandStretcher::OptionChannelsTogether);
+	rb.setExpectedInputDuration (n);
+	rb.setTimeRatio (1.0);
+	std::map<size_t, size_t> km;
+	for (auto const& p : pts) {
+		if (p.first > s && p.first < e) {
+			km[p.first - s] = p.second - s;
+		}
+	}
+	rb.setKeyFrameMap (km);
+
+	const samplecnt_t      block = 4096;
+	vector<const float*>   cp (nch);
+	for (samplepos_t pos = 0; pos < n; pos += block) {
+		const samplecnt_t k = std::min (block, n - pos);
+		for (size_t c = 0; c < nch; ++c) {
+			cp[c] = &in[c][s + pos];
+		}
+		rb.study (&cp[0], k, pos + k >= n);
+	}
+	vector<vector<float> > got (nch, vector<float> (8192)), res (nch);
+	vector<float*>         op (nch);
+	auto pull = [&] () {
+		int av;
+		while ((av = rb.available ()) > 0) {
+			const int m = std::min (av, 8192);
+			for (size_t c = 0; c < nch; ++c) {
+				op[c] = &got[c][0];
+			}
+			const size_t r = rb.retrieve (&op[0], m);
+			for (size_t c = 0; c < nch; ++c) {
+				res[c].insert (res[c].end (), got[c].begin (), got[c].begin () + r);
+			}
+		}
+	};
+	for (samplepos_t pos = 0; pos < n; pos += block) {
+		const samplecnt_t k = std::min (block, n - pos);
+		for (size_t c = 0; c < nch; ++c) {
+			cp[c] = &in[c][s + pos];
+		}
+		rb.process (&cp[0], k, pos + k >= n);
+		pull ();
+	}
+	pull ();
+	for (size_t c = 0; c < nch; ++c) {
+		res[c].resize (n, 0.f);
+	}
+
+	const samplecnt_t xfade = std::max ((samplecnt_t) 32, sr / 100);
+	const double      a0    = a - xfade / 2.0;
+	const double      b1    = b + xfade / 2.0;
+	const samplepos_t ws    = std::max (s, (samplepos_t) std::floor (a0));
+	const samplepos_t we    = std::min (e, (samplepos_t) std::ceil (b1));
+	for (samplepos_t i = ws; i < we; ++i) {
+		const double w = std::max (0.0, std::min (1.0, std::min ((i - a0) / xfade, (b1 - i) / xfade)));
+		for (size_t c = 0; c < nch; ++c) {
+			out[c][i] = out[c][i] * (1.0 - w) + res[c][i - s] * w;
+		}
+	}
+}
+
+/** Move the notes in time: stretch only where the source -> output map is not the identity */
+static void
+time_warp (vector<vector<float> > const& in, samplepos_t origin, samplecnt_t sr, vector<Note> const& notes,
+           vector<vector<float> >& out)
 {
 	out = in;
-	if (in.empty ()) {
+	const samplecnt_t len = in[0].size ();
+
+	typedef std::pair<samplepos_t, samplepos_t> Pt;
+	vector<Pt> raw;
+	raw.push_back (Pt (0, 0));
+	for (auto const& n : notes) {
+		raw.push_back (Pt (n.start - origin, n.ostart - origin));
+		raw.push_back (Pt (n.end - origin, n.oend - origin));
+	}
+	raw.push_back (Pt (len, len));
+	std::sort (raw.begin (), raw.end ());
+	vector<Pt> pts;
+	for (auto const& p : raw) {
+		if (p.first < 0 || p.first > len || p.second < 0 || p.second > len) {
+			continue;
+		}
+		if (pts.empty () || (p.first > pts.back ().first && p.second > pts.back ().second)) {
+			pts.push_back (p);
+		}
+	}
+
+	/* spans between two identity points with moved points in between */
+	size_t i = 0;
+	while (i + 1 < pts.size ()) {
+		size_t j = i + 1;
+		while (j < pts.size () && pts[j].first != pts[j].second) {
+			++j;
+		}
+		if (j >= pts.size ()) {
+			break;
+		}
+		if (j > i + 1) {
+			warp_span (in, sr, vector<Pt> (pts.begin () + i, pts.begin () + j + 1), out);
+		}
+		i = j;
+	}
+}
+
+void
+render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr, vector<Note> const& notes,
+        vector<vector<float> >& out)
+{
+	if (raw_in.empty ()) {
+		out = raw_in;
 		return;
 	}
+	vector<vector<float> > in;
+	time_warp (raw_in, origin, sr, notes, in);
+	out = in;
 	const samplecnt_t len    = in[0].size ();
 	const samplecnt_t xfade  = std::max ((samplecnt_t) 32, sr / 100); /* 10 ms */
 	const samplecnt_t margin = sr / 5;                                 /* context for the stretcher */
 
 	vector<vector<float> > shifted;
 	for (auto const& n : notes) {
-		if (!n.edited ()) {
+		if (!n.pitch_edited ()) {
 			continue;
 		}
-		const samplepos_t ns = n.start - origin;
-		const samplepos_t ne = n.end - origin;
+		/* after the time edit the note plays at ostart .. oend */
+		const samplepos_t ns = n.ostart - origin;
+		const samplepos_t ne = n.oend - origin;
 		if (ne <= 0 || ns >= len) {
 			continue;
 		}

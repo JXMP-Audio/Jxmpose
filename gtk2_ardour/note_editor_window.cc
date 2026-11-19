@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <list>
+#include <cstdlib>
 
 #include <ydk/gdkkeysyms.h>
 
@@ -74,6 +75,7 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	, _region (r)
 	, _snap_button (_("Snap to Semitone"))
 	, _reset_button (_("Reset Pitch"))
+	, _reset_time_button (_("Reset Timing"))
 	, _zoom_in ("+")
 	, _zoom_out ("−")
 	, _table (2, 2)
@@ -90,6 +92,7 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	, _grab (-1)
 	, _x0 (0), _y0 (0), _x1 (0), _y1 (0)
 	, _moved (false)
+	, _mouse_x (-1), _mouse_y (-1)
 	, _last_playhead (-1)
 {
 	set_session (&r->session ());
@@ -98,6 +101,8 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	_reset_button.set_tooltip_text (_("Back to the pitch they were sung at"));
 	_snap_button.signal_clicked ().connect (sigc::mem_fun (*this, &NoteEditorWindow::snap_selected));
 	_reset_button.signal_clicked ().connect (sigc::mem_fun (*this, &NoteEditorWindow::reset_selected));
+	_reset_time_button.set_tooltip_text (_("Put the selected notes (all when none is selected) back where they were played, with their original length"));
+	_reset_time_button.signal_clicked ().connect (sigc::mem_fun (*this, &NoteEditorWindow::reset_time));
 	_zoom_in.signal_clicked ().connect ([this] () { zoom (1.5, -1); });
 	_zoom_out.signal_clicked ().connect ([this] () { zoom (1 / 1.5, -1); });
 
@@ -105,6 +110,7 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	_toolbar.set_border_width (4);
 	_toolbar.pack_start (_snap_button, false, false);
 	_toolbar.pack_start (_reset_button, false, false);
+	_toolbar.pack_start (_reset_time_button, false, false);
 	_toolbar.pack_start (_status, true, true);
 	_toolbar.pack_end (_zoom_in, false, false);
 	_toolbar.pack_end (_zoom_out, false, false);
@@ -177,11 +183,7 @@ NoteEditorWindow::analyse ()
 		}
 		_lo = std::max (0.f, std::floor (lo) - 6);
 		_hi = std::min (127.f, std::ceil (hi) + 6);
-		size_t edited = 0;
-		for (auto const& n : _notes) {
-			edited += n.edited () ? 1 : 0;
-		}
-		_status.set_text (string_compose (_("%1 notes, %2 edited. Drag a note up or down, double-click puts it on the semitone (Alt = free)."), _notes.size (), edited));
+		update_status (_("Drag a note up / down for pitch, sideways to move it, its edge to change the length. S splits, M merges."));
 	} else {
 		_status.set_text (_("No notes found: this works on a single voice (vocal, solo instrument)."));
 	}
@@ -219,11 +221,7 @@ NoteEditorWindow::follow_undo ()
 		    ar->position () == _region->position ()) {
 			_region = ar;
 			load_region_notes ();
-			size_t edited = 0;
-			for (auto const& n : _notes) {
-				edited += n.edited () ? 1 : 0;
-			}
-			_status.set_text (string_compose (_("%1 notes, %2 edited."), _notes.size (), edited));
+			update_status ();
 			_canvas.queue_draw ();
 			return;
 		}
@@ -295,11 +293,62 @@ NoteEditorWindow::note_at (double x, double y) const
 	for (size_t i = 0; i < _notes.size (); ++i) {
 		NoteEdit::Note const& n = _notes[i];
 		const double yc = y_of (n.target ());
-		if (x >= x_of (n.start) && x <= x_of (n.end) && std::fabs (y - yc) <= _lane * 0.75) {
+		if (x >= x_of (n.ostart) && x <= x_of (n.oend) && std::fabs (y - yc) <= _lane * 0.75) {
 			return i;
 		}
 	}
 	return -1;
+}
+
+int
+NoteEditorWindow::edge_at (double x, double y, int& note) const
+{
+	/* the edges of a note: 5 px wide (less on tiny notes, so the middle stays grabbable) */
+	for (size_t i = 0; i < _notes.size (); ++i) {
+		NoteEdit::Note const& n = _notes[i];
+		if (std::fabs (y - y_of (n.target ())) > _lane * 0.75) {
+			continue;
+		}
+		const double xs = x_of (n.ostart), xe = x_of (n.oend);
+		const double gw = std::min (5.0, (xe - xs) / 4);
+		if (x >= xs - 2 && x <= xs + gw) {
+			note = i;
+			return -1;
+		}
+		if (x >= xe - gw && x <= xe + 2) {
+			note = i;
+			return 1;
+		}
+	}
+	note = -1;
+	return 0;
+}
+
+samplepos_t
+NoteEditorWindow::pos_at (double x) const
+{
+	return _an.origin + (samplepos_t) llrint ((x - key_width () + _hadj.get_value ()) / _pps * _an.sr);
+}
+
+bool
+NoteEditorWindow::any_selected () const
+{
+	return std::find (_sel.begin (), _sel.end (), true) != _sel.end ();
+}
+
+void
+NoteEditorWindow::update_status (std::string const& hint)
+{
+	size_t pe = 0, te = 0;
+	for (auto const& n : _notes) {
+		pe += n.pitch_edited () ? 1 : 0;
+		te += n.time_edited () ? 1 : 0;
+	}
+	std::string t = string_compose (_("%1 notes, %2 with new pitch, %3 with new timing."), _notes.size (), pe, te);
+	if (!hint.empty ()) {
+		t += "  " + hint;
+	}
+	_status.set_text (t);
 }
 
 static void
@@ -353,10 +402,12 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 	cairo_clip (cr);
 	for (size_t i = 0; i < _notes.size (); ++i) {
 		NoteEdit::Note const& n = _notes[i];
-		const double xs = x_of (n.start), xe = x_of (n.end);
+		const double xs = x_of (n.ostart), xe = x_of (n.oend);
 		if (xe < kw || xs > w) {
 			continue;
 		}
+		/* source frame -> x where it plays now */
+		auto fx = [&] (samplepos_t f) { return std::max (xs, std::min (xe, x_of ((samplepos_t) llrint (n.to_out (_an.origin + f * _an.hop))))); };
 		const double yc = y_of (n.target ());
 		const samplepos_t f0 = std::max ((samplepos_t) 0, (n.start - _an.origin) / _an.hop);
 		const samplepos_t f1 = std::min ((samplepos_t) _an.rms.size () - 1, (n.end - _an.origin) / _an.hop);
@@ -364,12 +415,12 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 		cairo_new_path (cr);
 		cairo_move_to (cr, xs, yc);
 		for (samplepos_t f = f0; f <= f1; ++f) {
-			const double x = std::max (xs, std::min (xe, x_of (_an.origin + f * _an.hop)));
+			const double x = fx (f);
 			cairo_line_to (cr, x, yc - std::max (2.0, _an.rms[f] * _lane * 0.8));
 		}
 		cairo_line_to (cr, xe, yc);
 		for (samplepos_t f = f1; f >= f0; --f) {
-			const double x = std::max (xs, std::min (xe, x_of (_an.origin + f * _an.hop)));
+			const double x = fx (f);
 			cairo_line_to (cr, x, yc + std::max (2.0, _an.rms[f] * _lane * 0.8));
 			if (f == 0) {
 				break;
@@ -392,7 +443,7 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 				pen = false;
 				continue;
 			}
-			const double x = x_of (_an.origin + f * _an.hop);
+			const double x = fx (f);
 			const double y = y_of (_an.midi[f] + n.shift);
 			if (pen) {
 				cairo_line_to (cr, x, y);
@@ -405,8 +456,20 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 		cairo_set_line_width (cr, 1.2);
 		cairo_stroke (cr);
 
+		/* where it was played: a faint bracket under the note */
+		if (n.time_edited ()) {
+			const double xo0 = x_of (n.start), xo1 = x_of (n.end), yb = yc + _lane * 0.7;
+			set_rgb (cr, 0xffffff, 0.3);
+			cairo_set_line_width (cr, 1);
+			cairo_move_to (cr, xo0 + 0.5, yb - 3);
+			cairo_line_to (cr, xo0 + 0.5, yb + 0.5);
+			cairo_line_to (cr, xo1 - 0.5, yb + 0.5);
+			cairo_line_to (cr, xo1 - 0.5, yb - 3);
+			cairo_stroke (cr);
+		}
+
 		/* where it was sung */
-		if (n.edited ()) {
+		if (n.pitch_edited ()) {
 			const double yo = y_of (n.pitch);
 			set_rgb (cr, 0xffffff, 0.25);
 			cairo_set_dash (cr, (double[]) { 3, 3 }, 2, 0);
@@ -484,10 +547,26 @@ bool
 NoteEditorWindow::Canvas::on_button_press_event (GdkEventButton* ev)
 {
 	grab_focus ();
-	if (ev->button != 1 || ev->x < _w.key_width () || ev->y < _w.ruler_height ()) {
+	if (ev->x < _w.key_width () || ev->y < _w.ruler_height ()) {
 		return false;
 	}
-	const int  i      = _w.note_at (ev->x, ev->y);
+	int        ei     = -1;
+	const int  edge   = _w.edge_at (ev->x, ev->y, ei);
+	const int  i      = edge ? ei : _w.note_at (ev->x, ev->y);
+	if (ev->button == 3 && ev->type == GDK_BUTTON_PRESS) {
+		if (i >= 0 && !_w._sel[i]) {
+			std::fill (_w._sel.begin (), _w._sel.end (), false);
+			_w._sel[i] = true;
+			queue_draw ();
+		}
+		_w._mouse_x = ev->x;
+		_w._mouse_y = ev->y;
+		_w.popup_menu (i, ev);
+		return true;
+	}
+	if (ev->button != 1) {
+		return false;
+	}
 	const bool toggle = ev->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK);
 
 	if (ev->type == GDK_2BUTTON_PRESS) {
@@ -516,13 +595,19 @@ NoteEditorWindow::Canvas::on_button_press_event (GdkEventButton* ev)
 			std::fill (_w._sel.begin (), _w._sel.end (), false);
 			_w._sel[i] = true;
 		}
+		if (edge && !toggle) {
+			/* resize this one note */
+			std::fill (_w._sel.begin (), _w._sel.end (), false);
+			_w._sel[i] = true;
+		}
 		if (_w._sel[i]) {
-			_w._drag = PitchDrag;
+			_w._drag = edge < 0 ? StartDrag : (edge > 0 ? EndDrag : Undecided);
 			_w._grab = i;
 			_w._base.resize (_w._notes.size ());
 			for (size_t k = 0; k < _w._notes.size (); ++k) {
 				_w._base[k] = _w._notes[k].shift;
 			}
+			_w._base_notes = _w._notes;
 		}
 	} else {
 		if (!toggle) {
@@ -537,6 +622,39 @@ NoteEditorWindow::Canvas::on_button_press_event (GdkEventButton* ev)
 bool
 NoteEditorWindow::Canvas::on_motion_notify_event (GdkEventMotion* ev)
 {
+	_w._mouse_x = ev->x;
+	_w._mouse_y = ev->y;
+
+	if (_w._drag == NoDrag && get_window ()) {
+		/* show what a drag would do here */
+		int ei;
+		if (_w.edge_at (ev->x, ev->y, ei)) {
+			get_window ()->set_cursor (Gdk::Cursor (Gdk::SB_H_DOUBLE_ARROW));
+		} else if (_w.note_at (ev->x, ev->y) >= 0) {
+			get_window ()->set_cursor (Gdk::Cursor (Gdk::FLEUR));
+		} else {
+			get_window ()->set_cursor ();
+		}
+		return false;
+	}
+
+	if (_w._drag == Undecided) {
+		/* the first few pixels decide: up / down = pitch, sideways = time */
+		const double dx = ev->x - _w._x0, dy = ev->y - _w._y0;
+		if (std::fabs (dx) < 4 && std::fabs (dy) < 4) {
+			return true;
+		}
+		_w._drag = std::fabs (dx) > std::fabs (dy) ? TimeDrag : PitchDrag;
+	}
+
+	if (_w._drag == TimeDrag || _w._drag == StartDrag || _w._drag == EndDrag) {
+		const ARDOUR::samplecnt_t d = (ARDOUR::samplecnt_t) llrint ((ev->x - _w._x0) / _w._pps * _w._an.sr);
+		_w._notes = _w._base_notes;
+		_w._moved = _w.time_edit (_w._drag, d);
+		queue_draw ();
+		return true;
+	}
+
 	if (_w._drag == PitchDrag) {
 		NoteEdit::Note const& g  = _w._notes[_w._grab];
 		const float           dy = (_w._y0 - ev->y) / _w._lane;
@@ -568,7 +686,7 @@ NoteEditorWindow::Canvas::on_motion_notify_event (GdkEventMotion* ev)
 		for (size_t k = 0; k < _w._notes.size (); ++k) {
 			NoteEdit::Note const& n  = _w._notes[k];
 			const double          yc = _w.y_of (n.target ());
-			if (_w.x_of (n.end) >= xa && _w.x_of (n.start) <= xb && yc + _w._lane / 2 >= ya && yc - _w._lane / 2 <= yb) {
+			if (_w.x_of (n.oend) >= xa && _w.x_of (n.ostart) <= xb && yc + _w._lane / 2 >= ya && yc - _w._lane / 2 <= yb) {
 				_w._sel[k] = true;
 			} else if (!(ev->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK))) {
 				_w._sel[k] = false;
@@ -590,6 +708,10 @@ NoteEditorWindow::Canvas::on_button_release_event (GdkEventButton* ev)
 	_w._drag     = NoDrag;
 	if (d == PitchDrag && _w._moved) {
 		_w.apply (_("move note pitch"));
+	} else if (d == TimeDrag && _w._moved) {
+		_w.apply (_("move note in time"));
+	} else if ((d == StartDrag || d == EndDrag) && _w._moved) {
+		_w.apply (_("change note length"));
 	}
 	queue_draw ();
 	return true;
@@ -676,6 +798,55 @@ NoteEditorWindow::on_key_press_event (GdkEventKey* ev)
 		case GDK_Down:
 			shift_selected (alt ? -0.1f : -1.f);
 			return true;
+		case GDK_Left:
+		case GDK_Right:
+			/* nudge the selection by 10 ms (Alt: 1 ms) */
+			if (any_selected ()) {
+				const samplecnt_t d = (alt ? _an.sr / 1000 : _an.sr / 100) * (ev->keyval == GDK_Left ? -1 : 1);
+				_base_notes         = _notes;
+				if (time_edit (TimeDrag, d)) {
+					apply (_("move note in time"));
+				}
+			}
+			return true;
+		case GDK_s:
+		case GDK_S:
+			if (!(ev->state & GDK_CONTROL_MASK)) {
+				const int i = note_at (_mouse_x, _mouse_y);
+				if (i >= 0) {
+					split_at (i, pos_at (_mouse_x));
+				}
+				return true;
+			}
+			break;
+		case GDK_z:
+		case GDK_Z:
+			/* the edits are undone in the editor; this window follows */
+			if (ev->state & GDK_CONTROL_MASK) {
+				if (ev->state & GDK_SHIFT_MASK) {
+					PublicEditor::instance ().redo (1);
+				} else {
+					PublicEditor::instance ().undo (1);
+				}
+				follow_undo ();
+				return true;
+			}
+			break;
+		case GDK_r:
+		case GDK_R:
+			if (ev->state & GDK_CONTROL_MASK) {
+				PublicEditor::instance ().redo (1);
+				follow_undo ();
+				return true;
+			}
+			break;
+		case GDK_m:
+		case GDK_M:
+			if (!(ev->state & GDK_CONTROL_MASK)) {
+				merge_selected ();
+				return true;
+			}
+			break;
 		case GDK_Escape:
 			std::fill (_sel.begin (), _sel.end (), false);
 			_canvas.queue_draw ();
@@ -691,6 +862,205 @@ NoteEditorWindow::on_key_press_event (GdkEventKey* ev)
 			break;
 	}
 	return ArdourWindow::on_key_press_event (ev);
+}
+
+/** the output timing is usable: every note long enough, in the analysed range, in order and not overlapping */
+static bool
+timing_ok (vector<NoteEdit::Note> const& notes, samplepos_t lo, samplepos_t hi, samplecnt_t min_len)
+{
+	for (size_t k = 0; k < notes.size (); ++k) {
+		NoteEdit::Note const& n = notes[k];
+		if (n.oend - n.ostart < min_len || n.ostart < lo || n.oend > hi) {
+			return false;
+		}
+		if (k > 0 && n.ostart < notes[k - 1].oend) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool
+NoteEditorWindow::time_edit (Drag what, samplecnt_t delta)
+{
+	/* starts from _base_notes, the timing when the drag began. Notes played legato with an edited note
+	 * (no gap between them) follow it: the neighbour stretches or shrinks instead of being overlapped. */
+	const vector<NoteEdit::Note> base = _base_notes;
+	const samplecnt_t legato  = _an.sr * 3 / 20; /* neighbours closer than 150 ms follow (a gap of silence absorbs the move) */
+	const samplecnt_t min_len = _an.sr / 40; /* a note keeps at least 25 ms */
+	const samplepos_t lo = _an.origin, hi = _an.origin + _an.length;
+
+	auto attempt = [&] (samplecnt_t d) -> bool {
+		_notes = base;
+		const size_t n = _notes.size ();
+		vector<bool> moves_start (n, false), moves_end (n, false);
+		for (size_t k = 0; k < n; ++k) {
+			if (what == TimeDrag) {
+				moves_start[k] = moves_end[k] = _sel[k];
+			} else if ((int) k == _grab) {
+				moves_start[k] = what == StartDrag;
+				moves_end[k]   = what == EndDrag;
+			}
+		}
+		for (size_t k = 0; k < n; ++k) {
+			if (moves_start[k]) {
+				_notes[k].ostart += d;
+				/* the legato neighbour before ends where this one starts now */
+				if (k > 0 && !moves_end[k - 1] && base[k].ostart - base[k - 1].oend <= legato) {
+					_notes[k - 1].oend = _notes[k].ostart - (base[k].ostart - base[k - 1].oend);
+				}
+			}
+			if (moves_end[k]) {
+				_notes[k].oend += d;
+				if (k + 1 < n && !moves_start[k + 1] && base[k + 1].ostart - base[k].oend <= legato) {
+					_notes[k + 1].ostart = _notes[k].oend + (base[k + 1].ostart - base[k].oend);
+				}
+			}
+		}
+		return timing_ok (_notes, lo, hi, min_len);
+	};
+
+	if (delta == 0) {
+		_notes = base;
+		return false;
+	}
+	if (attempt (delta)) {
+		return true;
+	}
+	/* blocked (a neighbour, the region edge, a note getting too short): go as far as possible */
+	samplecnt_t good = 0, bad = delta;
+	while (std::llabs (bad - good) > 1) {
+		const samplecnt_t mid = good + (bad - good) / 2;
+		if (attempt (mid)) {
+			good = mid;
+		} else {
+			bad = mid;
+		}
+	}
+	if (good == 0) {
+		_notes = base;
+		return false;
+	}
+	attempt (good);
+	return true;
+}
+
+void
+NoteEditorWindow::split_at (int i, samplepos_t out_pos)
+{
+	if (i < 0 || i >= (int) _notes.size ()) {
+		return;
+	}
+	NoteEdit::Note const  n       = _notes[i];
+	const samplecnt_t     min_len = _an.sr / 40;
+	if (out_pos - n.ostart < min_len || n.oend - out_pos < min_len) {
+		update_status (_("Too close to the edge of the note to split there."));
+		return;
+	}
+	const samplepos_t src = (samplepos_t) llrint (n.to_src (out_pos));
+	NoteEdit::Note a = n, b = n;
+	a.end    = src;
+	a.oend   = out_pos;
+	b.start  = src;
+	b.ostart = out_pos;
+	/* each part gets its own pitch centre; the edit (shift) stays the same, so nothing sounds different yet */
+	a.pitch = NoteEdit::median_pitch (_an, a.start, a.end, n.pitch);
+	b.pitch = NoteEdit::median_pitch (_an, b.start, b.end, n.pitch);
+	_notes[i] = a;
+	_notes.insert (_notes.begin () + i + 1, b);
+	_sel.assign (_notes.size (), false);
+	_sel[i + 1] = true;
+	apply (_("split note"));
+}
+
+void
+NoteEditorWindow::merge_selected ()
+{
+	size_t first = _notes.size (), last = 0;
+	for (size_t k = 0; k < _notes.size (); ++k) {
+		if (_sel[k]) {
+			first = std::min (first, k);
+			last  = std::max (last, k);
+		}
+	}
+	if (first >= last) {
+		update_status (_("Select two or more neighbouring notes to merge them."));
+		return;
+	}
+	/* one note from the first start to the last end; it keeps the edit of its longest part */
+	size_t longest = first;
+	for (size_t k = first; k <= last; ++k) {
+		if (_notes[k].end - _notes[k].start > _notes[longest].end - _notes[longest].start) {
+			longest = k;
+		}
+	}
+	NoteEdit::Note m = _notes[first];
+	m.end   = _notes[last].end;
+	m.oend  = _notes[last].oend;
+	m.pitch = NoteEdit::median_pitch (_an, m.start, m.end, _notes[longest].pitch);
+	m.shift = _notes[longest].shift;
+	_notes.erase (_notes.begin () + first + 1, _notes.begin () + last + 1);
+	_notes[first] = m;
+	_sel.assign (_notes.size (), false);
+	_sel[first] = true;
+	apply (_("merge notes"));
+}
+
+void
+NoteEditorWindow::reset_time ()
+{
+	const bool   any = any_selected ();
+	vector<bool> reset (_notes.size (), false);
+	for (size_t k = 0; k < _notes.size (); ++k) {
+		reset[k] = !any || _sel[k];
+	}
+	/* a neighbour that was stretched along would now overlap: it goes back as well */
+	bool again = true;
+	while (again) {
+		again                       = false;
+		vector<NoteEdit::Note> test = _notes;
+		for (size_t k = 0; k < test.size (); ++k) {
+			if (reset[k]) {
+				test[k].ostart = test[k].start;
+				test[k].oend   = test[k].end;
+			}
+		}
+		for (size_t k = 1; k < test.size (); ++k) {
+			if (test[k].ostart < test[k - 1].oend) {
+				again = again || !reset[k] || !reset[k - 1];
+				reset[k] = reset[k - 1] = true;
+			}
+		}
+	}
+	bool changed = false;
+	for (size_t k = 0; k < _notes.size (); ++k) {
+		if (reset[k] && _notes[k].time_edited ()) {
+			_notes[k].ostart = _notes[k].start;
+			_notes[k].oend   = _notes[k].end;
+			changed          = true;
+		}
+	}
+	if (changed) {
+		apply (_("reset note timing"));
+	}
+}
+
+void
+NoteEditorWindow::popup_menu (int i, GdkEventButton* ev)
+{
+	using namespace Gtk::Menu_Helpers;
+	MenuList& items = _menu.items ();
+	items.clear ();
+	const samplepos_t at = pos_at (ev->x);
+	if (i >= 0) {
+		items.push_back (MenuElem (_("Split Here (S)"), [this, i, at] () { split_at (i, at); }));
+	}
+	items.push_back (MenuElem (_("Merge Selected (M)"), sigc::mem_fun (*this, &NoteEditorWindow::merge_selected)));
+	items.push_back (SeparatorElem ());
+	items.push_back (MenuElem (_("Snap to Semitone"), sigc::mem_fun (*this, &NoteEditorWindow::snap_selected)));
+	items.push_back (MenuElem (_("Reset Pitch"), sigc::mem_fun (*this, &NoteEditorWindow::reset_selected)));
+	items.push_back (MenuElem (_("Reset Timing"), sigc::mem_fun (*this, &NoteEditorWindow::reset_time)));
+	_menu.popup (ev->button, ev->time);
 }
 
 void
@@ -747,11 +1117,7 @@ NoteEditorWindow::apply (std::string const& what)
 		}
 	}
 	_region = std::dynamic_pointer_cast<AudioRegion> (nr);
-	size_t edited = 0;
-	for (auto const& n : _notes) {
-		edited += n.edited () ? 1 : 0;
-	}
-	_status.set_text (string_compose (_("%1 notes, %2 edited."), _notes.size (), edited));
+	update_status ();
 	_canvas.queue_draw ();
 }
 

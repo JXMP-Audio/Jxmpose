@@ -18,12 +18,13 @@
 
 #pragma once
 
-/* Per-note pitch editing of monophonic audio (vocals).
+/* Per-note pitch and timing editing of monophonic audio (vocals, bass, solo instruments).
  *
  * The audio of a region is analysed once (pYIN: pitch track + note segmentation), every detected note
- * becomes an editable object with a pitch offset. Rendering never touches the original recording: the
- * region always reads from its master (original) sources, every edited note is pitch shifted on its own
- * with a constant ratio (Rubber Band R3, formants preserved) and crossfaded into the untouched audio.
+ * becomes an editable object with a pitch offset and an output position / length. Rendering never touches
+ * the original recording: the region always reads from its master (original) sources, the stretches around
+ * moved notes are time-stretched with key frames at the note edges, then every re-pitched note is shifted
+ * on its own with a constant ratio (Rubber Band R3, formants preserved) and crossfaded into the audio.
  * The edits live in the region's extra XML ("JXNoteEdit"), in master-source sample positions, so they
  * survive trims and can be reopened.
  */
@@ -48,15 +49,23 @@ namespace PBD {
 namespace NoteEdit {
 
 struct Note {
-	ARDOUR::samplepos_t start; ///< master-source sample position
-	ARDOUR::samplepos_t end;   ///< exclusive
-	float pitch;               ///< detected pitch centre, MIDI note number (fractional)
-	float shift;               ///< edit, semitones
+	ARDOUR::samplepos_t start;  ///< where it was sung: master-source sample position
+	ARDOUR::samplepos_t end;    ///< exclusive
+	ARDOUR::samplepos_t ostart; ///< where it plays after a time edit (same coordinates)
+	ARDOUR::samplepos_t oend;
+	float pitch;                ///< detected pitch centre, MIDI note number (fractional)
+	float shift;                ///< edit, semitones
 
-	Note () : start (0), end (0), pitch (0), shift (0) {}
+	Note () : start (0), end (0), ostart (0), oend (0), pitch (0), shift (0) {}
 	float target () const { return pitch + shift; }
-	bool edited () const { return shift > 0.001f || shift < -0.001f; }
+	bool pitch_edited () const { return shift > 0.001f || shift < -0.001f; }
+	bool time_edited () const { return ostart != start || oend != end; }
+	bool edited () const { return pitch_edited () || time_edited (); }
+	/** output position of a source position inside the note */
+	double to_out (double src) const { return end > start ? ostart + (src - start) * (double) (oend - ostart) / (end - start) : ostart; }
+	double to_src (double out) const { return oend > ostart ? start + (out - ostart) * (double) (end - start) / (oend - ostart) : start; }
 };
+
 
 /** What the analysis found in one region's range of its master sources */
 struct Analysis {
@@ -71,6 +80,9 @@ struct Analysis {
 	Analysis () : sr (48000), hop (256), origin (0), length (0) {}
 };
 
+/** Pitch centre (median of the pitch track) between two master-source positions; `fallback` without voiced frames */
+float median_pitch (Analysis const&, ARDOUR::samplepos_t start, ARDOUR::samplepos_t end, float fallback);
+
 /** Master-source range the region plays (start, length) */
 void region_master_range (std::shared_ptr<ARDOUR::AudioRegion>, ARDOUR::samplepos_t& start, ARDOUR::samplecnt_t& len);
 
@@ -84,8 +96,10 @@ int analyse (std::shared_ptr<ARDOUR::AudioRegion>, Analysis&, PBD::Progress* pro
 bool load_notes (std::shared_ptr<ARDOUR::Region const>, std::vector<Note>&);
 XMLNode* notes_to_xml (std::vector<Note> const&);
 
-/** Shift `in` (frames of all channels, from master position `origin`) by the edited notes: each note is
- *  rendered with its own constant ratio and crossfaded in over `xfade` samples centred on its edges. */
+/** Apply the edited notes to `in` (frames of all channels, from master position `origin`). First the timing:
+ *  only the stretches of audio around moved / resized notes are time-stretched (Rubber Band, key frames at the
+ *  note edges), everything else stays untouched. Then the pitch: each note is shifted with its own constant
+ *  ratio and crossfaded in over 10 ms centred on its (output) edges. */
 void render (std::vector<std::vector<float> > const& in, ARDOUR::samplepos_t origin, ARDOUR::samplecnt_t sr,
              std::vector<Note> const&, std::vector<std::vector<float> >& out);
 

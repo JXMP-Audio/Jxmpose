@@ -58,16 +58,21 @@ Ardour project.
   track: both spectra are drawn behind the curve and the frequencies where
   both tracks are loud (e.g. kick and bass) are marked red.
 
-- **Edit Notes** — per-note pitch editing of a vocal or other single voice
+- **Edit Notes** — per-note editing of a vocal, bass or other single voice
   (Region › Edit › Edit Notes…). The recording is analysed (pYIN) and every
-  sung note becomes a blob on a keyboard grid, shaped by its level, with the
-  sung pitch curve inside. Drag a note up or down (whole semitones, Alt =
-  free), double-click puts it exactly on the nearest semitone, Snap to
-  Semitone / Reset Pitch work on the selection or on all notes. Each edited
-  note is shifted on its own with formants preserved (Rubber Band R3) and
-  crossfaded into the untouched audio; the original recording is never
-  changed, every edit is one undo step and the notes are saved with the
-  session.
+  note becomes a blob on a keyboard grid, shaped by its level, with the
+  sung pitch curve inside. Drag a note up or down for its pitch (whole
+  semitones, Alt = free), sideways to move it in time, or drag its left /
+  right edge to change its length; neighbouring notes played legato stretch
+  along. Double-click puts a note exactly on the nearest semitone, S splits
+  the note under the mouse, M merges the selected ones, Left / Right nudge
+  by 10 ms; Snap to Semitone, Reset Pitch and Reset Timing work on the
+  selection or on all notes (also in the right-click menu). Only the audio
+  around moved notes is time-stretched, each re-pitched note is shifted on
+  its own with formants preserved (Rubber Band R3) and crossfaded into the
+  untouched audio; the original recording is never changed, every edit is
+  one undo step (Ctrl+Z works in the window) and the notes are saved with
+  the session.
 
 ## Building
 
