@@ -206,7 +206,7 @@ private:
 	ProcessorBox processor_box;
 	ProcessorBox* _sends_box; // studio Inspector only
 	QuickControls* _quick_controls; // studio Inspector only
-	ChannelStrip*  _channel_strip;  // studio Inspector only
+	ChannelStrip*  _channel_strip;  // studio Inspector and mixer strips
 	GainMeter    gpm;
 	PannerUI     panners;
 

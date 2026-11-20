@@ -1575,14 +1575,16 @@ MixerStrip::build_inspector_layout ()
 		}
 		quick = manage (new StudioSection (_("Quick Controls"), pfx + X_("quick-controls"), false));
 		quick->add_item (*_quick_controls);
-
-		_channel_strip = manage (new ChannelStrip);
-		if (_route) {
-			_channel_strip->set_route (_route);
-		}
-		strip = manage (new StudioSection (_("Channel Strip"), pfx + X_("channel-strip"), false));
-		strip->add_item (*_channel_strip);
 	}
+
+	/* the built-in channel strip, in the Inspector and in every mixer strip (there it starts
+	 * collapsed, so the fader keeps its height) */
+	_channel_strip = manage (new ChannelStrip);
+	if (_route) {
+		_channel_strip->set_route (_route);
+	}
+	strip = manage (new StudioSection (_("Channel Strip"), pfx + X_("channel-strip"), false, _embedded));
+	strip->add_item (*_channel_strip);
 
 	StudioSection* channel = manage (new StudioSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), true));
 	channel->add_item (invert_button_box);
