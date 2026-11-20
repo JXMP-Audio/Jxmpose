@@ -287,7 +287,6 @@ ChannelStrip::rebuild ()
 			for (auto w : _body[m].get_children ()) {
 				w->show_all ();
 			}
-			_body[m].show ();
 		}
 	}
 	update_buttons ();
@@ -298,8 +297,14 @@ void
 ChannelStrip::update_buttons ()
 {
 	for (int m = 0; m < NModules; ++m) {
-		_button[m].set_active (_proc[m] && _proc[m]->enabled ());
-		_body[m].set_sensitive (_proc[m] && _proc[m]->enabled ());
+		const bool on = _proc[m] && _proc[m]->enabled ();
+		_button[m].set_active (on);
+		/* a switched off (bypassed) module folds away; its settings stay for the next time */
+		if (on) {
+			_body[m].show ();
+		} else {
+			_body[m].hide ();
+		}
 		_button[m].set_sensitive ((bool) _route);
 	}
 }
