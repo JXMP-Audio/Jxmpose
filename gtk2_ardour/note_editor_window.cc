@@ -261,6 +261,15 @@ NoteEditorWindow::update_adjustments ()
 	const double w  = std::max (1, _canvas.get_width ()) - key_width ();
 	const double h  = std::max (1, _canvas.get_height ()) - ruler_height ();
 	const double tw = _an.length / (double) _an.sr * _pps;
+	/* a window taller than the note range shows more keys instead of an empty strip below the grid */
+	while ((_hi - _lo + 1) * _lane < h && (_lo > 0 || _hi < 127)) {
+		if (_hi < 127) {
+			_hi += 1;
+		}
+		if (_lo > 0 && (_hi - _lo + 1) * _lane < h) {
+			_lo -= 1;
+		}
+	}
 	const double th = (_hi - _lo + 1) * _lane;
 	_hadj.set_upper (std::max (tw, w));
 	_hadj.set_page_size (w);
