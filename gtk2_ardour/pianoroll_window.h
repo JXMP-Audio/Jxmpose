@@ -20,23 +20,14 @@
 
 #include "ardour_window.h"
 
-#include <ytkmm/box.h>
-#include <ytkmm/label.h>
-#include <ytkmm/scrolledwindow.h>
-
-#include "widgets/ardour_button.h"
-
-#include "score_view.h"
+#include "midi_editor_panel.h"
 
 namespace ARDOUR {
 	class MidiRegion;
 	class MidiTrack;
-	class Track;
 }
 
-class Pianoroll;
-class RegionEditor;
-
+/** The MIDI editor in its own window (the same panel as in the editor's bottom pane) */
 class PianorollWindow : public ArdourWindow
 {
 public:
@@ -51,43 +42,9 @@ public:
 	bool on_delete_event (GdkEventAny*);
 	void set_show_source (bool);
 
-	enum EditorMode {
-		KeyEditor,
-		DrumEditor,
-		ScoreEditor,
-	};
-	void set_editor_mode (EditorMode);
+	typedef MidiEditorPanel::EditorMode EditorMode;
+	void set_editor_mode (EditorMode m) { panel.set_editor_mode (m); }
 
 private:
-	Gtk::VBox     vpacker;
-	Gtk::HBox     mode_bar;
-	Gtk::HBox     hpacker;
-	Gtk::VBox     score_placeholder;
-	Gtk::ScrolledWindow score_scroller;
-	ScoreView     score_view;
-	std::shared_ptr<ARDOUR::MidiRegion> _region;
-	Pianoroll*    pianoroll;
-	RegionEditor* region_editor;
-	EditorMode    _mode;
-
-	ArdourWidgets::ArdourButton key_button;
-	ArdourWidgets::ArdourButton drum_button;
-	ArdourWidgets::ArdourButton score_button;
-	ArdourWidgets::ArdourButton all_drums_button;
-	ArdourWidgets::ArdourButton drum_notation_button;
-
-	/* score input: select, or the note value that a click adds */
-	Gtk::HBox note_value_box;
-	std::vector<std::pair<ArdourWidgets::ArdourButton*, int64_t>> note_value_buttons;
-	ArdourWidgets::ArdourButton dot_button;
-	ArdourWidgets::ArdourButton triplet_button;
-	ArdourWidgets::ArdourButton quint_button;
-	int64_t _note_base;    ///< picked value, 0: select
-	bool    _note_dot;
-	bool    _note_triplet;
-	bool    _note_quint;
-	/** pick a note value; with notes selected it also sets their length */
-	void set_note_value (int64_t ticks);
-	void apply_note_value (bool to_selection);
-	std::shared_ptr<ARDOUR::MidiTrack> _track;
+	MidiEditorPanel panel;
 };

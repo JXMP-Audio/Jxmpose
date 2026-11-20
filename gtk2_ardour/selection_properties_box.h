@@ -36,7 +36,7 @@ class RegionEditor;
 class RegionFxPropertiesBox;
 class RoutePropertiesBox;
 class SlotPropertiesBox;
-class Pianoroll;
+class MidiEditorPanel;
 
 class SelectionPropertiesBox : public Gtk::HBox, public ARDOUR::SessionHandlePtr
 {
@@ -69,7 +69,8 @@ private:
 	RegionEditor*          _region_editor;
 	RegionFxPropertiesBox* _region_fx_box;
 	DispositionMask _disposition;
-	Pianoroll*              _pianoroll;
+	MidiEditorPanel*        _midi_editor;
+	int                     _midi_editor_mode; ///< MidiEditorPanel::EditorMode, kept while the panel is rebuilt
 
 	PBD::ScopedConnection _region_connection;
 	PBD::ScopedConnection _editor_connection;

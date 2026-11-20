@@ -35,6 +35,7 @@
 #include "control_point.h"
 #include "editor.h"
 #include "midi_region_view.h"
+#include "midi_editor_panel.h"
 #include "pianoroll.h"
 #include "region_fx_line.h"
 #include "region_fx_properties_box.h"
@@ -58,7 +59,8 @@ SelectionPropertiesBox::SelectionPropertiesBox (DispositionMask mask)
 	: _region_editor (nullptr)
 	, _region_fx_box (nullptr)
 	, _disposition (mask)
-	, _pianoroll (nullptr)
+	, _midi_editor (nullptr)
+	, _midi_editor_mode (MidiEditorPanel::KeyEditor)
 {
 	init ();
 
@@ -88,7 +90,7 @@ SelectionPropertiesBox::~SelectionPropertiesBox ()
 	delete _region_editor;
 	delete _region_fx_box;
 	delete _slot_prop_box;
-	delete _pianoroll;
+	delete _midi_editor;
 }
 
 void
@@ -124,8 +126,8 @@ SelectionPropertiesBox::set_session (Session* s)
 	_route_prop_box->set_session(s);
 	_slot_prop_box->set_session(s);
 
-	if (_pianoroll) {
-		_pianoroll->set_session (_session);
+	if (_midi_editor) {
+		_midi_editor->set_session (_session);
 	}
 
 	selection_changed();
@@ -163,9 +165,12 @@ SelectionPropertiesBox::delete_region_editor ()
 	}
 	delete _region_editor;
 	delete _region_fx_box;
-	delete _pianoroll;
+	if (_midi_editor) {
+		_midi_editor_mode = _midi_editor->editor_mode ();
+	}
+	delete _midi_editor;
 	_region_editor = nullptr;
-	_pianoroll = nullptr;
+	_midi_editor = nullptr;
 	_region_fx_box = nullptr;
 	_region_editor = nullptr;
 	_region_fx_box = nullptr;
@@ -297,7 +302,7 @@ SelectionPropertiesBox::selection_changed ()
 		_slot_prop_box->show ();
 		_route_prop_box->hide ();
 		delete_region_editor ();
-	} else if (_region_editor || _pianoroll) {
+	} else if (_region_editor || _midi_editor) {
 		_slot_prop_box->hide ();
 		_route_prop_box->hide ();
 		_region_editor_box.show ();
@@ -349,22 +354,35 @@ SelectionPropertiesBox::show_similar_midi_regions (RegionSelection& rs)
 		std::shared_ptr<MidiRegion> mr = std::dynamic_pointer_cast<MidiRegion>(mrv->region());
 
 		if (mt && mr) {
-			if (!_pianoroll) {
-				_pianoroll = new Pianoroll (X_("region editor pianoroll"), true, true);
-				_pianoroll->get_canvas_viewport()->set_size_request (-1, 120);
+			if (!_midi_editor) {
+				/* the same Key | Drum | Score editor as the MIDI editor window */
+				_midi_editor = new MidiEditorPanel (X_("region editor pianoroll"), true, true);
+				_midi_editor->pianoroll ().get_canvas_viewport()->set_size_request (-1, 120);
 				if (_session) {
-					_pianoroll->set_session (_session);
+					_midi_editor->set_session (_session);
+				}
+				if (_midi_editor_mode == MidiEditorPanel::ScoreEditor) {
+					_midi_editor->set_editor_mode (MidiEditorPanel::ScoreEditor);
 				}
 			}
 
-			_pianoroll->add_region (mr, mt);
+			_midi_editor->add_region (mt, mr);
 		}
 	}
 
-	_pianoroll->set_region (midi_region_views.back()->region());
+	{
+		MidiRegionView* mrv = midi_region_views.back ();
+		std::shared_ptr<ARDOUR::MidiTrack> mt = std::dynamic_pointer_cast<ARDOUR::MidiTrack> (mrv->midi_view()->track());
+		std::shared_ptr<MidiRegion> mr = std::dynamic_pointer_cast<MidiRegion>(mrv->region());
+		if (!_midi_editor || !mt || !mr) {
+			return;
+		}
+		_midi_editor->set_region (mt, mr);
+	}
 
-	_region_editor_box.pack_start (_pianoroll->contents(), true, true);
+	if (!_midi_editor->get_parent ()) {
+		_region_editor_box.pack_start (*_midi_editor, true, true);
+	}
 
-	_pianoroll->contents().hide (); // Why is this needed?
-	_pianoroll->contents().show_all ();
+	_midi_editor->show ();
 }
