@@ -2064,6 +2064,12 @@ Pianoroll::add_region (std::shared_ptr<ARDOUR::Region> region, std::shared_ptr<A
 		return;
 	}
 
+	if (region_view_map.find (region) != region_view_map.end ()) {
+		/* already shown (the bottom pane adds the selection again on every change): a second view would
+		 * not be in the map, never be deleted and keep following the region after this editor is gone
+		 * (crash in MidiView::region_resized -> size_start_rect on the deleted background) */
+		return;
+	}
 
 	PianorollMidiView* new_view;
 
