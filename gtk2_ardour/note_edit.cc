@@ -337,10 +337,12 @@ load_notes (std::shared_ptr<Region const> r, vector<Note>& notes)
 	return !notes.empty ();
 }
 
-/** One span of all channels shifted by a constant ratio; same length and timing as the input */
+/** One span of all channels pitch-shifted; same length and timing as the input. `ratio_at` gives the ratio at a
+ *  position inside the span (0 .. len); it is set per block (realtime mode follows changes), 256 samples when it
+ *  varies, so a glide moves in ~5 ms steps that the stretcher smooths. */
 static void
 shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len, samplecnt_t sr,
-            double ratio, double formant_semitones, vector<vector<float> >& out)
+            std::function<double (samplecnt_t)> ratio_at, bool varying, double formant_semitones, vector<vector<float> >& out)
 {
 	using namespace RubberBand;
 	const size_t nch = in.size ();
@@ -349,13 +351,16 @@ shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len,
 	RubberBandStretcher rb (sr, nch,
 	                        RubberBandStretcher::OptionProcessRealTime | RubberBandStretcher::OptionEngineFiner |
 	                        RubberBandStretcher::OptionFormantPreserved | RubberBandStretcher::OptionChannelsTogether);
-	rb.setPitchScale (ratio);
-	if (formant_semitones != 0) {
-		/* preserved formants would be scaled by 1 / ratio; move them on top of that */
-		rb.setFormantScale (std::pow (2.0, formant_semitones / 12.0) / ratio);
-	}
+	auto set_ratio = [&] (double ratio) {
+		rb.setPitchScale (ratio);
+		if (formant_semitones != 0) {
+			/* preserved formants would be scaled by 1 / ratio; move them on top of that */
+			rb.setFormantScale (std::pow (2.0, formant_semitones / 12.0) / ratio);
+		}
+	};
+	set_ratio (ratio_at (0));
 
-	const int        block = 1024;
+	const int        block = varying ? 256 : 1024;
 	vector<float*>   ptrs (nch);
 	vector<vector<float> > tmp (nch, vector<float> (std::max (block, (int) rb.getPreferredStartPad ())));
 	vector<const float*> cptrs (nch);
@@ -392,6 +397,9 @@ shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len,
 
 	for (samplecnt_t pos = 0; pos < len; pos += block) {
 		const samplecnt_t n = std::min ((samplecnt_t) block, len - pos);
+		if (varying) {
+			set_ratio (ratio_at (pos + n / 2));
+		}
 		for (size_t c = 0; c < nch; ++c) {
 			cptrs[c] = &in[c][from + pos];
 		}
@@ -412,6 +420,13 @@ shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len,
 	for (size_t c = 0; c < nch; ++c) {
 		out[c].resize (len, 0.f);
 	}
+}
+
+static void
+shift_span (vector<vector<float> > const& in, samplepos_t from, samplecnt_t len, samplecnt_t sr,
+            double ratio, double formant_semitones, vector<vector<float> >& out)
+{
+	shift_span (in, from, len, sr, [ratio] (samplecnt_t) { return ratio; }, false, formant_semitones, out);
 }
 
 /** Windowed-sinc read of `x` at a fractional position */
@@ -579,6 +594,115 @@ time_warp (vector<vector<float> > const& in, samplepos_t origin, samplecnt_t sr,
 	}
 }
 
+static inline double
+smoothstep (double t)
+{
+	t = std::max (0.0, std::min (1.0, t));
+	return t * t * (3 - 2 * t);
+}
+
+vector<Glide>
+glides (vector<Note> const& notes, samplecnt_t sr)
+{
+	const samplecnt_t near = sr * 3 / 10; /* closer notes are joined by a glide */
+	const samplecnt_t tail = sr * 15 / 100;
+
+	vector<Note const*> v;
+	for (auto const& n : notes) {
+		v.push_back (&n);
+	}
+	std::sort (v.begin (), v.end (), [] (Note const* a, Note const* b) { return a->ostart < b->ostart; });
+
+	auto moved = [] (Note const* n) { return n->shift > 0.001f || n->shift < -0.001f || n->formant > 0.001f || n->formant < -0.001f; };
+
+	vector<Glide> g;
+	for (size_t i = 0; i < v.size (); ++i) {
+		Note const* n    = v[i];
+		Note const* prev = i > 0 ? v[i - 1] : 0;
+		Note const* next = i + 1 < v.size () ? v[i + 1] : 0;
+		const bool  join_prev = prev && n->ostart >= prev->oend && n->ostart - prev->oend < near;
+		const bool  join_next = next && next->ostart >= n->oend && next->ostart - n->oend < near;
+
+		if (join_next) {
+			if (moved (n) || moved (next)) {
+				const samplecnt_t in_n    = std::min (sr * 8 / 100, (n->oend - n->ostart) / 4);
+				const samplecnt_t in_next = std::min (sr * 8 / 100, (next->oend - next->ostart) / 4);
+				Glide x;
+				x.a       = n->oend - in_n;
+				x.b       = next->ostart + in_next;
+				x.s0      = n->shift;
+				x.s1      = next->shift;
+				x.formant = (n->formant + next->formant) / 2;
+				x.open    = 0;
+				g.push_back (x);
+			}
+		} else if (moved (n) && !(next && next->ostart < n->oend)) {
+			/* the tail after the note, up to half way to the next one */
+			Glide x;
+			x.a = n->oend;
+			x.b = n->oend + (next ? std::min (tail, (next->ostart - n->oend) / 2) : tail);
+			x.s0 = x.s1 = n->shift;
+			x.formant   = n->formant;
+			x.open      = 1;
+			g.push_back (x);
+		}
+		if (!join_prev && moved (n) && !(prev && prev->oend > n->ostart)) {
+			/* the onset before the note (a scoop into it) */
+			Glide x;
+			x.a = n->ostart - (prev ? std::min (tail, (n->ostart - prev->oend) / 2) : tail);
+			x.b = n->ostart;
+			x.s0 = x.s1 = n->shift;
+			x.formant   = n->formant;
+			x.open      = -1;
+			g.push_back (x);
+		}
+	}
+	return g;
+}
+
+double
+glide_weight (Glide const& g, double pos, samplecnt_t sr)
+{
+	const double xfade = std::max ((samplecnt_t) 32, sr / 100);
+	const double half  = std::max (1.0, (g.b - g.a) / 2.0);
+	double       l, r;
+	if (g.open < 0) {
+		l = (pos - g.a) / half;
+	} else {
+		l = (pos - (g.a - xfade / 2)) / xfade;
+	}
+	if (g.open > 0) {
+		r = (g.b - pos) / half;
+	} else {
+		r = ((g.b + xfade / 2) - pos) / xfade;
+	}
+	return std::max (0.0, std::min (1.0, std::min (l, r)));
+}
+
+/* the glided shift itself (semitones) at a position between a and b */
+static double
+glide_curve (Glide const& g, double pos)
+{
+	if (g.b <= g.a) {
+		return g.s1;
+	}
+	return g.s0 + (g.s1 - g.s0) * smoothstep ((pos - g.a) / (double) (g.b - g.a));
+}
+
+bool
+glide_at (vector<Glide> const& gl, double pos, samplecnt_t sr, double& shift, double& weight)
+{
+	for (auto const& g : gl) {
+		const double x = std::max ((samplecnt_t) 32, sr / 100) / 2.0;
+		if (pos >= g.a - (g.open < 0 ? 0 : x) && pos < g.b + (g.open > 0 ? 0 : x)) {
+			shift  = glide_curve (g, pos);
+			weight = glide_weight (g, pos, sr);
+			return true;
+		}
+	}
+	return false;
+}
+
 void
 render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr, vector<Note> const& notes,
         Analysis const& an, vector<vector<float> >& out)
@@ -594,7 +718,40 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 	const samplecnt_t xfade  = std::max ((samplecnt_t) 32, sr / 100); /* 10 ms */
 	const samplecnt_t margin = sr / 5;                                 /* context for the stretcher */
 
+	/* every re-pitched piece is added with its weight; where the weights reach 1 the untouched audio is not used,
+	 * so a note and the glide next to it cross over without the original pitch in between */
+	vector<vector<float> > acc (out.size (), vector<float> (len, 0.f));
+	vector<float>          wsum (len, 0.f);
+
+	vector<float>          joined (len, 0.f); /* weight of glides between two notes: the notes give way there */
+
 	vector<vector<float> > shifted;
+	for (auto const& g : glides (notes, sr)) {
+		const samplepos_t ga = g.a - origin, gb = g.b - origin;
+		if (gb <= 0 || ga >= len || gb <= ga) {
+			continue;
+		}
+		const samplepos_t s = std::max ((samplepos_t) 0, ga - margin);
+		const samplepos_t e = std::min (len, gb + margin);
+		shift_span (in, s, e - s, sr, [&] (samplecnt_t p) { return std::pow (2.0, glide_curve (g, origin + s + p) / 12.0); },
+		            g.s0 != g.s1, g.formant, shifted);
+		const samplepos_t ws = std::max (s, ga - xfade);
+		const samplepos_t we = std::min (e, gb + xfade);
+		for (samplepos_t i = ws; i < we; ++i) {
+			const double w = glide_weight (g, origin + i, sr);
+			if (w <= 0) {
+				continue;
+			}
+			for (size_t c = 0; c < out.size (); ++c) {
+				acc[c][i] += w * shifted[c][i - s];
+			}
+			wsum[i] += w;
+			if (g.open == 0) {
+				joined[i] = std::max (joined[i], (float) w);
+			}
+		}
+	}
+
 	for (auto const& n : notes) {
 		if (!n.pitch_edited ()) {
 			continue;
@@ -631,10 +788,20 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 		const samplepos_t ws = std::max (s, (samplepos_t) std::floor (a0));
 		const samplepos_t we = std::min (e, (samplepos_t) std::ceil (b1));
 		for (samplepos_t i = ws; i < we; ++i) {
-			const double w = std::max (0.0, std::min (1.0, std::min ((i - a0) / xfade, (b1 - i) / xfade)));
+			const double w = std::max (0.0, std::min (1.0, std::min ((i - a0) / xfade, (b1 - i) / xfade))) * (1.0 - joined[i]);
 			for (size_t c = 0; c < out.size (); ++c) {
-				out[c][i] = out[c][i] * (1.0 - w) + shifted[c][i - s] * w;
+				acc[c][i] += w * shifted[c][i - s];
 			}
+			wsum[i] += w;
+		}
+	}
+	for (samplecnt_t i = 0; i < len; ++i) {
+		const float w = wsum[i];
+		if (w <= 0.f) {
+			continue;
+		}
+		for (size_t c = 0; c < out.size (); ++c) {
+			out[c][i] = w >= 1.f ? acc[c][i] / w : acc[c][i] + in[c][i] * (1.f - w);
 		}
 	}
 

@@ -393,6 +393,117 @@ set_rgb (cairo_t* cr, uint32_t rgb, double a = 1.0)
 	cairo_set_source_rgba (cr, ((rgb >> 16) & 0xff) / 255.0, ((rgb >> 8) & 0xff) / 255.0, (rgb & 0xff) / 255.0, a);
 }
 
+/** The sung pitch outside the notes (slides into a note, breaths, the tail after it) as a thin line that
+ *  joins the pitch lines of the notes, so the whole phrase reads as one curve. It is drawn the way it
+ *  sounds: between the notes the audio is moved / stretched with the notes (the same piecewise map as
+ *  NoteEdit::render) and glides from the pitch edit of one note to the next (NoteEdit::glides). */
+void
+NoteEditorWindow::draw_transitions (cairo_t* cr, double kw, double w)
+{
+	if (_an.midi.empty () || _notes.empty ()) {
+		return;
+	}
+	const samplepos_t nf = _an.midi.size ();
+
+	/* source -> output map: identity at both ends, note edges as key points (as NoteEdit::render) */
+	typedef std::pair<samplepos_t, samplepos_t> Pt;
+	vector<Pt> raw;
+	raw.push_back (Pt (_an.origin, _an.origin));
+	for (auto const& n : _notes) {
+		raw.push_back (Pt (n.start, n.ostart));
+		raw.push_back (Pt (n.end, n.oend));
+	}
+	raw.push_back (Pt (_an.origin + _an.length, _an.origin + _an.length));
+	std::sort (raw.begin (), raw.end ());
+	vector<Pt> pts;
+	for (auto const& p : raw) {
+		if (pts.empty () || (p.first > pts.back ().first && p.second > pts.back ().second)) {
+			pts.push_back (p);
+		}
+	}
+
+	/* notes by source position, to find the one a frame belongs to while walking the frames */
+	vector<size_t> order (_notes.size ());
+	for (size_t i = 0; i < order.size (); ++i) {
+		order[i] = i;
+	}
+	std::sort (order.begin (), order.end (), [this] (size_t a, size_t b) { return _notes[a].start < _notes[b].start; });
+
+	vector<vector<float> > dev (_notes.size ());
+	vector<samplepos_t>    df0 (_notes.size (), 0);
+	vector<bool>           have_dev (_notes.size (), false);
+
+	size_t oi = 0; /* index into `order` */
+	size_t pi = 0; /* segment of `pts` */
+	bool   pen     = false;
+	bool   in_prev = false;
+
+	cairo_new_path (cr);
+	for (samplepos_t f = 0; f < nf; ++f) {
+		const samplepos_t pos = _an.origin + f * _an.hop;
+		while (oi < order.size () && _notes[order[oi]].end <= pos) {
+			++oi;
+		}
+		const bool in_note = oi < order.size () && _notes[order[oi]].start <= pos;
+
+		if (_an.midi[f] <= 0) {
+			pen = false;
+			in_prev = in_note;
+			continue;
+		}
+
+		double x, m;
+		if (in_note) {
+			const size_t           i = order[oi];
+			NoteEdit::Note const& n = _notes[i];
+			m = _an.midi[f] + n.shift;
+			if (n.drift > 0.001f) {
+				if (!have_dev[i]) {
+					dev[i]      = NoteEdit::drift_curve (_an, n, df0[i]);
+					have_dev[i] = true;
+				}
+				if (f >= df0[i] && f - df0[i] < (samplepos_t) dev[i].size ()) {
+					m -= n.drift * dev[i][f - df0[i]];
+				}
+			}
+			const double out = n.to_out (pos);
+			double       gs, gw;
+			if (NoteEdit::glide_at (_gl, out, _an.sr, gs, gw)) {
+				m = (1 - gw) * m + gw * (_an.midi[f] + gs);
+			}
+			x = x_of ((samplepos_t) llrint (out));
+		} else {
+			while (pi + 2 < pts.size () && pts[pi + 1].first <= pos) {
+				++pi;
+			}
+			double out = pos;
+			if (pi + 1 < pts.size () && pts[pi + 1].first > pts[pi].first) {
+				const double t = (pos - pts[pi].first) / (double) (pts[pi + 1].first - pts[pi].first);
+				out = pts[pi].second + t * (pts[pi + 1].second - pts[pi].second);
+			}
+			x = x_of ((samplepos_t) llrint (out));
+			double gs, gw;
+			m = _an.midi[f];
+			if (NoteEdit::glide_at (_gl, out, _an.sr, gs, gw)) {
+				m += gw * gs;
+			}
+		}
+		const double y = y_of (m);
+
+		/* inside a note the bright line of the note is drawn later: only the steps from and to a gap here */
+		if (pen && (!in_note || !in_prev)) {
+			cairo_line_to (cr, x, y);
+		} else {
+			cairo_move_to (cr, x, y);
+		}
+		pen     = true;
+		in_prev = in_note;
+	}
+	set_rgb (cr, 0xc8d8e8, 0.45);
+	cairo_set_line_width (cr, 1.0);
+	cairo_stroke (cr);
+}
+
 void
 NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 {
@@ -436,6 +547,9 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 	/* blobs */
 	cairo_rectangle (cr, kw, rh, w - kw, h - rh);
 	cairo_clip (cr);
+	/* the audio between and at the ends of the notes follows their pitch edits */
+	_gl = NoteEdit::glides (_notes, _an.sr);
+	draw_transitions (cr, kw, w);
 	for (size_t i = 0; i < _notes.size (); ++i) {
 		NoteEdit::Note const& n = _notes[i];
 		const double xs = x_of (n.ostart), xe = x_of (n.oend);
@@ -489,6 +603,10 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 			double m = _an.midi[f] + n.shift;
 			if (!dev.empty () && f >= df0 && f - df0 < (samplepos_t) dev.size ()) {
 				m -= n.drift * dev[f - df0];
+			}
+			double gs, gw;
+			if (NoteEdit::glide_at (_gl, n.to_out (_an.origin + f * _an.hop), _an.sr, gs, gw)) {
+				m = (1 - gw) * m + gw * (_an.midi[f] + gs);
 			}
 			const double y = y_of (m);
 			if (pen) {

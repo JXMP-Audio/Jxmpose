@@ -105,6 +105,25 @@ int analyse (std::shared_ptr<ARDOUR::AudioRegion>, Analysis&, PBD::Progress* pro
 bool load_notes (std::shared_ptr<ARDOUR::Region const>, std::vector<Note>&);
 XMLNode* notes_to_xml (std::vector<Note> const&);
 
+/** The audio between the notes follows their pitch edits (output positions, semitones):
+ *  - two notes less than 300 ms apart are joined by a glide from the shift of the first to the shift of the
+ *    second; it reaches into both notes (up to 80 ms, a quarter of the note), because the slide from one
+ *    note to the next usually lies inside the notes, and replaces them there,
+ *  - before / after a note without such a neighbour (a scoop into it, its tail) the note's shift is kept for
+ *    150 ms and fades back to the untouched audio over the outer half (`open` = -1 at a, +1 at b, 0 joined).
+ *  Only where a neighbouring note has a new pitch or formant. */
+struct Glide {
+	ARDOUR::samplepos_t a, b;
+	float               s0, s1;
+	float               formant;
+	int                 open;
+};
+std::vector<Glide> glides (std::vector<Note> const&, ARDOUR::samplecnt_t sr);
+/** 0..1: how much of the glided audio is used at output position `pos` (10 ms crossfades at joined ends) */
+double glide_weight (Glide const&, double pos, ARDOUR::samplecnt_t sr);
+/** The glide covering output position `pos`: its shift there (semitones) and weight; false if there is none */
+bool glide_at (std::vector<Glide> const&, double pos, ARDOUR::samplecnt_t sr, double& shift, double& weight);
+
 /** Apply the edited notes to `in` (frames of all channels, from master position `origin`). First the timing:
  *  only the stretches of audio around moved / resized notes are time-stretched (Rubber Band, key frames at the
  *  note edges), everything else stays untouched. Then the pitch: each note is shifted with its own constant

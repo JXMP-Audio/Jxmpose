@@ -137,6 +137,8 @@ private:
 	void   zoom (double factor, double around_x);
 
 	void draw (cairo_t*, int w, int h);
+	void draw_transitions (cairo_t*, double kw, double w);
+	std::vector<NoteEdit::Glide> _gl; ///< glides of the notes as drawn (refreshed per draw)
 	void snap_selected ();
 	void reset_selected ();
 	void shift_selected (float semitones);

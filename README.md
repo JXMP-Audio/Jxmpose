@@ -61,7 +61,8 @@ Ardour project.
 - **Edit Notes** — per-note editing of a vocal, bass or other single voice
   (Region › Edit › Edit Notes…). The recording is analysed (pYIN) and every
   note becomes a blob on a keyboard grid, shaped by its level, with the
-  sung pitch curve inside. Drag a note up or down for its pitch (whole
+  sung pitch curve inside; a thin line continues the curve between the notes
+  (slides, scoops, tails). Drag a note up or down for its pitch (whole
   semitones, Alt = free), sideways to move it in time, or drag its left /
   right edge to change its length; neighbouring notes played legato stretch
   along. Double-click puts a note exactly on the nearest semitone, S splits
@@ -70,7 +71,9 @@ Ardour project.
   selection or on all notes (also in the right-click menu). Correct Pitch…
   moves notes towards the nearest semitone and flattens their pitch drift
   by an amount (vibrato stays); Level and Formant set the loudness and the
-  formants (voice character) of the selected notes. Only the audio
+  formants (voice character) of the selected notes. The slide between two
+  neighbouring notes glides from one edit to the other, a scoop into a note
+  and its tail move with it. Only the audio
   around moved notes is time-stretched, each re-pitched note is shifted on
   its own with formants preserved (Rubber Band R3) and crossfaded into the
   untouched audio; the original recording is never changed, every edit is
