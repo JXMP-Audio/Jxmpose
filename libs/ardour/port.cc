@@ -874,6 +874,9 @@ Port::set_state (const XMLNode& node, int)
 
 	const XMLNodeList& children (node.children());
 
+	/* the backend may report connections from its own thread meanwhile (insert_connection) */
+	PBD::RWLock::WriterLock lm (_connections_lock);
+
 	_int_connections.clear ();
 	_ext_connections.clear ();
 
