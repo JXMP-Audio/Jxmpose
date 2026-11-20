@@ -27,6 +27,7 @@
 
 #include "widgets/ardour_button.h"
 
+#include "chord_pads.h"
 #include "score_view.h"
 
 namespace ARDOUR {
@@ -37,7 +38,7 @@ namespace ARDOUR {
 
 class Pianoroll;
 
-/** The MIDI editor: Key | Drum | Score views of the same region with their tool bar.
+/** The MIDI editor: Key | Drum | Score | Chord Pads views of the same region with their tool bar.
  *  Used by the MIDI editor window and by the editor's bottom pane, so both behave the same. */
 class MidiEditorPanel : public Gtk::VBox
 {
@@ -50,6 +51,7 @@ public:
 		KeyEditor,
 		DrumEditor,
 		ScoreEditor,
+		ChordEditor, ///< chord pads above the key editor
 	};
 
 	Pianoroll& pianoroll () { return *_pianoroll; }
@@ -82,6 +84,12 @@ private:
 	ArdourWidgets::ArdourButton key_button;
 	ArdourWidgets::ArdourButton drum_button;
 	ArdourWidgets::ArdourButton score_button;
+	ArdourWidgets::ArdourButton chord_button;
+	ChordPads                   chord_pads;
+	/** write a pad's chord at a position of the region's source (beats) */
+	void insert_chord (int pad, Temporal::Beats source_start);
+	void insert_chord_at_playhead (int pad);
+	void chord_dropped (Glib::RefPtr<Gdk::DragContext> const&, int x, int y, Gtk::SelectionData const&, guint, guint);
 	ArdourWidgets::ArdourButton all_drums_button;
 	ArdourWidgets::ArdourButton drum_notation_button;
 

@@ -22,10 +22,14 @@
 
 #include "ardour/midi_region.h"
 #include "ardour/midi_track.h"
+#include "ardour/session.h"
+
+#include "canvas/canvas.h"
 
 #include "gtkmm2ext/keyboard.h"
 
 #include "midi_editor_panel.h"
+#include "pianoroll_midi_view.h"
 #include "pianoroll.h"
 
 #include "widgets/tooltips.h"
@@ -33,6 +37,7 @@
 #include "pbd/i18n.h"
 
 using namespace ARDOUR;
+using namespace Temporal;
 
 MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, bool expandable)
 	: _pianoroll (new Pianoroll (name, with_transport, expandable))
@@ -40,6 +45,7 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	, key_button (_("Key Editor"))
 	, drum_button (_("Drum Editor"))
 	, score_button (_("Score Editor"))
+	, chord_button (_("Chord Pads"))
 	, all_drums_button (_("All Drums"))
 	, drum_notation_button (_("Drum Notation"))
 	, dot_button (".")
@@ -60,6 +66,7 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 		{ &key_button,   KeyEditor,   _("Notes on a piano keyboard grid") },
 		{ &drum_button,  DrumEditor,  _("Drum hits: one row per drum sound, notes as fixed-length hits") },
 		{ &score_button, ScoreEditor, _("Music notation of the region (view only for now; Ctrl+wheel to zoom)") },
+		{ &chord_button, ChordEditor, _("Chord pads: build chords from root, type, tension and bass; hold a pad to hear it, drag it into the notes to write it") },
 	};
 	for (auto const& m : modes) {
 		m.b->set_name ("tab button");
@@ -143,7 +150,18 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	score_view.signal_focus_out_event ().connect (sigc::mem_fun (*this, &MidiEditorPanel::score_focus_out), false);
 	score_view.signal_key_press_event ().connect (sigc::mem_fun (*this, &MidiEditorPanel::score_key_press), false);
 
+	/* chord pads: dropped onto the notes they write the chord there */
+	chord_pads.InsertRequested.connect (sigc::mem_fun (*this, &MidiEditorPanel::insert_chord_at_playhead));
+	{
+		std::vector<Gtk::TargetEntry> targets;
+		targets.push_back (Gtk::TargetEntry (ChordPads::drag_target (), Gtk::TARGET_SAME_APP));
+		Gtk::Widget* cv = _pianoroll->get_canvas ();
+		cv->drag_dest_set (targets, Gtk::DEST_DEFAULT_ALL, Gdk::ACTION_COPY);
+		cv->signal_drag_data_received ().connect (sigc::mem_fun (*this, &MidiEditorPanel::chord_dropped));
+	}
+
 	pack_start (mode_bar, false, false);
+	pack_start (chord_pads, false, false);
 	pack_start (hpacker, true, true);
 	pack_start (score_placeholder, true, true);
 	show_all ();
@@ -151,6 +169,8 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	score_placeholder.set_no_show_all ();
 	score_placeholder.hide ();
 	hpacker.set_no_show_all ();
+	chord_pads.set_no_show_all ();
+	chord_pads.hide ();
 	all_drums_button.set_no_show_all ();
 	all_drums_button.hide ();
 	drum_notation_button.set_no_show_all ();
@@ -167,6 +187,13 @@ MidiEditorPanel::set_editor_mode (EditorMode m)
 	key_button.set_active (m == KeyEditor);
 	drum_button.set_active (m == DrumEditor);
 	score_button.set_active (m == ScoreEditor);
+	chord_button.set_active (m == ChordEditor);
+	if (m == ChordEditor) {
+		chord_pads.set_channel (std::max (0, _pianoroll->visible_channel ()));
+		chord_pads.show ();
+	} else {
+		chord_pads.hide ();
+	}
 	if (m == DrumEditor) {
 		all_drums_button.show ();
 	} else {
@@ -239,12 +266,13 @@ MidiEditorPanel::set_region (std::shared_ptr<MidiTrack> track, std::shared_ptr<M
 	_region = region;
 	_track  = track;
 	score_view.set_track (track);
+	chord_pads.set_track (track);
 	if (_mode == ScoreEditor) {
 		score_view.set_region (region);
 	}
 
 	/* follow the track's note mode (drum tracks open in the drum editor) */
-	if (_mode != ScoreEditor) {
+	if (_mode != ScoreEditor && _mode != ChordEditor) {
 		set_editor_mode (_pianoroll->note_mode () == ARDOUR::Percussive ? DrumEditor : KeyEditor);
 	}
 
@@ -374,3 +402,73 @@ MidiEditorPanel::score_key_press (GdkEventKey* ev)
 	return handle_key (ev);
 }
 
+
+void
+MidiEditorPanel::insert_chord (int pad, Temporal::Beats start)
+{
+	MidiView* mv = _pianoroll->midi_view ();
+	if (!mv || !mv->midi_region ()) {
+		return;
+	}
+	std::vector<uint8_t> const p = chord_pads.pitches (pad);
+	if (p.empty ()) {
+		return;
+	}
+	uint8_t const ch = (uint8_t) std::max (0, std::min (15, _pianoroll->visible_channel ()));
+	mv->clear_note_selection ();
+	mv->start_note_diff_command (string_compose (_("add chord %1"), chord_pads.name (pad)));
+	for (uint8_t n : p) {
+		mv->note_diff_add_note (std::shared_ptr<MidiView::NoteType> (new MidiView::NoteType (ch, start, chord_pads.length (), n, 100)), true);
+	}
+	mv->apply_note_diff ();
+}
+
+void
+MidiEditorPanel::insert_chord_at_playhead (int pad)
+{
+	std::shared_ptr<MidiRegion> r = _region;
+	MidiView* mv = _pianoroll->midi_view ();
+	if (mv && mv->midi_region ()) {
+		r = mv->midi_region ();
+	}
+	if (!r) {
+		return;
+	}
+	timepos_t pos (r->session ().audible_sample ());
+	if (pos < r->position () || pos >= r->nt_last ()) {
+		/* outside the region: its start */
+		pos = r->position ();
+	}
+	_pianoroll->snap_to (pos, Temporal::RoundNearest, ARDOUR::SnapToGrid_Scaled);
+	insert_chord (pad, r->absolute_time_to_source_beats (pos));
+}
+
+void
+MidiEditorPanel::chord_dropped (Glib::RefPtr<Gdk::DragContext> const& ctx, int x, int y, Gtk::SelectionData const& data, guint, guint time)
+{
+	MidiView* mv = _pianoroll->midi_view ();
+	if (!mv || !mv->midi_region () || data.get_length () <= 0) {
+		ctx->drag_finish (false, false, time);
+		return;
+	}
+	const int pad = atoi (data.get_data_as_string ().c_str ());
+
+	/* the same time a click there would add a note at (NoteCreateDrag) */
+	GdkEventButton ev;
+	memset (&ev, 0, sizeof (ev));
+	ev.type = GDK_BUTTON_PRESS;
+	ev.x    = x;
+	ev.y    = y;
+	timepos_t pos (_pianoroll->window_event_sample ((GdkEvent*) &ev));
+	_pianoroll->snap_to (pos, Temporal::RoundDownMaybe, ARDOUR::SnapToGrid_Scaled);
+
+	std::shared_ptr<MidiRegion> r = mv->midi_region ();
+	Temporal::Beats start;
+	if (!mv->on_timeline ()) {
+		start = r->absolute_time_to_source_beats (timepos_t (r->source_position ().beats () + pos.beats ()));
+	} else {
+		start = r->absolute_time_to_source_beats (pos);
+	}
+	insert_chord (pad, start);
+	ctx->drag_finish (true, false, time);
+}
