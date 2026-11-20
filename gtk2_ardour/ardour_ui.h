@@ -628,6 +628,7 @@ private:
 	void transport_goto_wallclock ();
 	void transport_stop ();
 	void transport_record (bool roll);
+	void record_selected_roll ();
 	void transport_roll ();
 	void transport_play_selection();
 	void transport_play_preroll();

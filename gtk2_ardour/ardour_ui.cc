@@ -1819,6 +1819,29 @@ ARDOUR_UI::transport_record (bool roll)
 	}
 }
 
+/** Numpad '*' (Cubase-like): arm the selected tracks, enable record and roll; while recording it punches out
+ *  and keeps playing */
+void
+ARDOUR_UI::record_selected_roll ()
+{
+	if (!_session) {
+		return;
+	}
+	if (_session->record_status () == Recording) {
+		_session->disable_record (false, true);
+		return;
+	}
+	if (editor) {
+		for (auto tv : editor->get_selection ().tracks) {
+			RouteTimeAxisView* rtv = dynamic_cast<RouteTimeAxisView*> (tv);
+			if (rtv && rtv->is_track () && rtv->track ()->rec_enable_control ()) {
+				rtv->track ()->rec_enable_control ()->set_value (1.0, PBD::Controllable::NoGroup);
+			}
+		}
+	}
+	transport_record (true);
+}
+
 void
 ARDOUR_UI::transport_roll ()
 {

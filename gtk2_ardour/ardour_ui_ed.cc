@@ -384,6 +384,10 @@ ARDOUR_UI::install_actions ()
 	ActionManager::session_sensitive_actions.push_back (act);
 	ActionManager::write_sensitive_actions.push_back (act);
 	ActionManager::transport_sensitive_actions.push_back (act);
+	act = ActionManager::register_action (transport_actions, X_("record-selected-roll"), _("Record Selected Tracks"), sigc::mem_fun(*this, &ARDOUR_UI::record_selected_roll));
+	ActionManager::session_sensitive_actions.push_back (act);
+	ActionManager::write_sensitive_actions.push_back (act);
+	ActionManager::transport_sensitive_actions.push_back (act);
 	act = ActionManager::register_action (transport_actions, X_("alternate-record-roll"), _("Start Recording"), sigc::bind (sigc::mem_fun(*this, &ARDOUR_UI::transport_record), true));
 	ActionManager::session_sensitive_actions.push_back (act);
 	ActionManager::write_sensitive_actions.push_back (act);

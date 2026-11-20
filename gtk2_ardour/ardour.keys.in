@@ -124,6 +124,7 @@ This mode provides many different operations on both regions and control points,
 @trans|Transport/ToggleRollMaybe|               <@PRIMARY@><@SECONDARY@>space|stop (keep loop/range play)
 @trans|Transport/ToggleRollForgetCapture|                    <@PRIMARY@>space|stop and destroy
 @trans|Transport/record-roll|                               <@TERTIARY@>space|start recording
+@trans|Transport/record-selected-roll|                    KP_Multiply|arm the selected tracks and start recording
 
 @gmark|Common/add-location-from-playhead|                                 Tab|add marker
 @gmark|Common/remove-location-from-playhead|                   <@PRIMARY@>Tab|remove marker
@@ -239,7 +240,7 @@ This mode provides many different operations on both regions and control points,
 @aep|Region/align-regions-sync-relative|                               x|align sync points (relative)
 @editing|Editing/editor-cut|                                 <@PRIMARY@>x|cut
 @edit|Editor/cut-paste-section|                 <@PRIMARY@><@TERTIARY@>x|cut \& paste section
-@mmode|Editing/set-mouse-mode-cut|                                      c|cut mode
+@mmode|Editing/set-mouse-mode-cut|                          <@TERTIARY@>c|cut mode
 @editing|Editing/editor-copy|                                <@PRIMARY@>c|copy
 @wvis|Common/show-trigger|                                <@SECONDARY@>c|show cues page
 @edit|Editor/editor-crop|                      <@PRIMARY@><@SECONDARY@>c|crop range
@@ -395,7 +396,7 @@ This mode provides many different operations on both regions and control points,
 
 ;; numbers
 
-@gmode|Transport/ToggleClick|                        grave|toggle click (metronome)
+@gmode|Transport/ToggleClick|                            c|toggle click (metronome)
 @midi|MIDI/panic|                         <@PRIMARY@>grave|MIDI panic (stop all midi notes)
 @trans|Transport/ToggleExternalSync|    <@SECONDARY@>grave|toggle external sync
 @eep|Editor/cycle-edit-mode|                             1|cycle edit mode {slide, lock, ripple}
@@ -478,7 +479,7 @@ This mode provides many different operations on both regions and control points,
 @notes|Notes/nudge-later-fine|                    <@SECONDARY@>Right|Nudge Notes Later (fine)
 @notes|Notes/nudge-earlier|                                     Left|Nudge Notes Earlier
 @notes|Notes/nudge-earlier-fine|                   <@SECONDARY@>Left|Nudge Notes Earlier (fine)
-@notes|Notes/edit-channels|                                        c|Edit Note Channels
+@notes|Notes/edit-channels|                            <@TERTIARY@>c|Edit Note Channels
 @notes|Notes/edit-velocities|                                      v|Edit Note Velocities
 @notes|Notes/split-notes-grid|                          <@PRIMARY@>e|Split Notes By Grid
 @notes|Notes/join-notes|                                           j|Join Notes
