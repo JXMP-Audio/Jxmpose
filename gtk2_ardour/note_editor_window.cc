@@ -104,6 +104,8 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	, _x0 (0), _y0 (0), _x1 (0), _y1 (0)
 	, _moved (false)
 	, _mouse_x (-1), _mouse_y (-1)
+	, _hover_trans (-1)
+	, _trans_base (0)
 	, _last_playhead (-1)
 {
 	set_session (&r->session ());
@@ -468,7 +470,7 @@ NoteEditorWindow::draw_transitions (cairo_t* cr, double kw, double w)
 			}
 			const double out = n.to_out (pos);
 			double       gs, gw;
-			if (NoteEdit::glide_at (_gl, out, _an.sr, gs, gw)) {
+			if (NoteEdit::glide_at (_gl, out, _an.sr, gs, gw, &_an)) {
 				m = (1 - gw) * m + gw * (_an.midi[f] + gs);
 			}
 			x = x_of ((samplepos_t) llrint (out));
@@ -484,7 +486,7 @@ NoteEditorWindow::draw_transitions (cairo_t* cr, double kw, double w)
 			x = x_of ((samplepos_t) llrint (out));
 			double gs, gw;
 			m = _an.midi[f];
-			if (NoteEdit::glide_at (_gl, out, _an.sr, gs, gw)) {
+			if (NoteEdit::glide_at (_gl, out, _an.sr, gs, gw, &_an)) {
 				m += gw * gs;
 			}
 		}
@@ -502,6 +504,69 @@ NoteEditorWindow::draw_transitions (cairo_t* cr, double kw, double w)
 	set_rgb (cr, 0xc8d8e8, 0.45);
 	cairo_set_line_width (cr, 1.0);
 	cairo_stroke (cr);
+}
+
+vector<NoteEditorWindow::TransHandle>
+NoteEditorWindow::transition_handles () const
+{
+	vector<TransHandle> h;
+	vector<size_t>      order (_notes.size ());
+	for (size_t i = 0; i < order.size (); ++i) {
+		order[i] = i;
+	}
+	std::sort (order.begin (), order.end (), [this] (size_t a, size_t b) { return _notes[a].ostart < _notes[b].ostart; });
+	const samplecnt_t near = _an.sr * 3 / 10; /* as NoteEdit::glides */
+	for (size_t k = 0; k + 1 < order.size (); ++k) {
+		NoteEdit::Note const& a = _notes[order[k]];
+		NoteEdit::Note const& b = _notes[order[k + 1]];
+		if (b.ostart < a.oend || b.ostart - a.oend >= near) {
+			continue;
+		}
+		TransHandle t;
+		t.note = order[k + 1];
+		t.x    = x_of ((a.oend + b.ostart) / 2);
+		t.y    = y_of ((a.target () + b.target ()) / 2);
+		h.push_back (t);
+	}
+	return h;
+}
+
+int
+NoteEditorWindow::trans_handle_at (double x, double y) const
+{
+	for (auto const& t : transition_handles ()) {
+		if (std::fabs (x - t.x) <= 7 && std::fabs (y - t.y) <= 7) {
+			return t.note;
+		}
+	}
+	return -1;
+}
+
+/** a small handle in the middle of each transition: drag sideways for a quicker / slower slide */
+void
+NoteEditorWindow::draw_trans_handles (cairo_t* cr)
+{
+	for (auto const& t : transition_handles ()) {
+		NoteEdit::Note const& n   = _notes[t.note];
+		const bool            hot = t.note == _hover_trans || (_drag == TransDrag && t.note == _grab);
+		const bool            set = n.trans_edited ();
+		cairo_new_path (cr);
+		cairo_arc (cr, t.x, t.y, hot ? 5.5 : 4, 0, 2 * M_PI);
+		set_rgb (cr, set ? 0xf0a040 : 0x1e2024, set ? 0.95 : 0.8);
+		cairo_fill_preserve (cr);
+		set_rgb (cr, set ? 0xffd090 : 0xc8d8e8, hot ? 1.0 : 0.6);
+		cairo_set_line_width (cr, 1.2);
+		cairo_stroke (cr);
+		if (hot && set) {
+			char buf[32];
+			snprintf (buf, sizeof (buf), "%.0f ms", n.trans * 1000.0);
+			cairo_select_font_face (cr, "Barlow", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+			cairo_set_font_size (cr, 10);
+			set_rgb (cr, 0xffd090, 0.95);
+			cairo_move_to (cr, t.x + 8, t.y - 8);
+			cairo_show_text (cr, buf);
+		}
+	}
 }
 
 void
@@ -605,7 +670,7 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 				m -= n.drift * dev[f - df0];
 			}
 			double gs, gw;
-			if (NoteEdit::glide_at (_gl, n.to_out (_an.origin + f * _an.hop), _an.sr, gs, gw)) {
+			if (NoteEdit::glide_at (_gl, n.to_out (_an.origin + f * _an.hop), _an.sr, gs, gw, &_an)) {
 				m = (1 - gw) * m + gw * (_an.midi[f] + gs);
 			}
 			const double y = y_of (m);
@@ -654,6 +719,8 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 			cairo_set_dash (cr, 0, 0, 0);
 		}
 	}
+
+	draw_trans_handles (cr);
 
 	/* rubber band */
 	if (_drag == RectDrag) {
@@ -724,6 +791,31 @@ NoteEditorWindow::Canvas::on_button_press_event (GdkEventButton* ev)
 	grab_focus ();
 	if (ev->x < _w.key_width () || ev->y < _w.ruler_height ()) {
 		return false;
+	}
+	if (ev->button == 1) {
+		const int th = _w.trans_handle_at (ev->x, ev->y);
+		if (th >= 0) {
+			NoteEdit::Note& n = _w._notes[th];
+			if (ev->type == GDK_2BUTTON_PRESS) {
+				/* back to the transition as it was sung */
+				_w._drag = NoDrag;
+				if (n.trans_edited ()) {
+					n.trans = 0;
+					_w.apply (_("reset note transition"));
+				}
+				queue_draw ();
+				return true;
+			}
+			if (ev->type == GDK_BUTTON_PRESS) {
+				_w._drag       = TransDrag;
+				_w._grab       = th;
+				_w._x0         = ev->x;
+				_w._moved      = false;
+				_w._trans_base = n.trans_edited () ? n.trans : 0.08f;
+				queue_draw ();
+			}
+			return true;
+		}
 	}
 	int        ei     = -1;
 	const int  edge   = _w.edge_at (ev->x, ev->y, ei);
@@ -802,8 +894,16 @@ NoteEditorWindow::Canvas::on_motion_notify_event (GdkEventMotion* ev)
 
 	if (_w._drag == NoDrag && get_window ()) {
 		/* show what a drag would do here */
-		int ei;
-		if (_w.edge_at (ev->x, ev->y, ei)) {
+		int       ei;
+		const int th = _w.trans_handle_at (ev->x, ev->y);
+		if (th != _w._hover_trans) {
+			_w._hover_trans = th;
+			_w.update_status (th >= 0 ? _("Transition: drag left = quicker, right = slower slide. Double-click = as sung.") : "");
+			queue_draw ();
+		}
+		if (th >= 0) {
+			get_window ()->set_cursor (Gdk::Cursor (Gdk::SB_H_DOUBLE_ARROW));
+		} else if (_w.edge_at (ev->x, ev->y, ei)) {
 			get_window ()->set_cursor (Gdk::Cursor (Gdk::SB_H_DOUBLE_ARROW));
 		} else if (_w.note_at (ev->x, ev->y) >= 0) {
 			get_window ()->set_cursor (Gdk::Cursor (Gdk::FLEUR));
@@ -820,6 +920,17 @@ NoteEditorWindow::Canvas::on_motion_notify_event (GdkEventMotion* ev)
 			return true;
 		}
 		_w._drag = std::fabs (dx) > std::fabs (dy) ? TimeDrag : PitchDrag;
+	}
+
+	if (_w._drag == TransDrag) {
+		/* 1 px = 2 ms; 5 .. 500 ms */
+		const float t = std::max (0.005f, std::min (0.5f, (float) (_w._trans_base + (ev->x - _w._x0) * 0.002)));
+		if (t != _w._notes[_w._grab].trans) {
+			_w._notes[_w._grab].trans = t;
+			_w._moved                 = true;
+		}
+		queue_draw ();
+		return true;
 	}
 
 	if (_w._drag == TimeDrag || _w._drag == StartDrag || _w._drag == EndDrag) {
@@ -887,6 +998,15 @@ NoteEditorWindow::Canvas::on_button_release_event (GdkEventButton* ev)
 		_w.apply (_("move note in time"));
 	} else if ((d == StartDrag || d == EndDrag) && _w._moved) {
 		_w.apply (_("change note length"));
+	} else if (d == TransDrag) {
+		if (!_w._moved && !_w._notes[_w._grab].trans_edited ()) {
+			/* a click on an untouched handle sets the default length */
+			_w._notes[_w._grab].trans = _w._trans_base;
+			_w._moved                 = true;
+		}
+		if (_w._moved) {
+			_w.apply (_("change note transition"));
+		}
 	}
 	queue_draw ();
 	return true;

@@ -307,6 +307,9 @@ notes_to_xml (vector<Note> const& notes)
 		c->set_property ("oend", n.oend);
 		c->set_property ("pitch", n.pitch);
 		c->set_property ("shift", n.shift);
+		if (n.trans_edited ()) {
+			c->set_property ("trans", n.trans);
+		}
 		node->add_child_nocopy (*c);
 	}
 	return node;
@@ -327,6 +330,7 @@ load_notes (std::shared_ptr<Region const> r, vector<Note>& notes)
 			c->get_property ("drift", n.drift);
 			c->get_property ("gain", n.gain);
 			c->get_property ("formant", n.formant);
+			c->get_property ("trans", n.trans);
 			if (!c->get_property ("ostart", n.ostart) || !c->get_property ("oend", n.oend)) {
 				n.ostart = n.start;
 				n.oend   = n.end;
@@ -614,6 +618,7 @@ glides (vector<Note> const& notes, samplecnt_t sr)
 	std::sort (v.begin (), v.end (), [] (Note const* a, Note const* b) { return a->ostart < b->ostart; });
 
 	auto moved = [] (Note const* n) { return n->shift > 0.001f || n->shift < -0.001f || n->formant > 0.001f || n->formant < -0.001f; };
+	auto mid   = [] (Note const* n) { return (n->ostart + n->oend) / 2; };
 
 	vector<Glide> g;
 	for (size_t i = 0; i < v.size (); ++i) {
@@ -624,7 +629,7 @@ glides (vector<Note> const& notes, samplecnt_t sr)
 		const bool  join_next = next && next->ostart >= n->oend && next->ostart - n->oend < near;
 
 		if (join_next) {
-			if (moved (n) || moved (next)) {
+			if (moved (n) || moved (next) || next->trans_edited ()) {
 				const samplecnt_t in_n    = std::min (sr * 8 / 100, (n->oend - n->ostart) / 4);
 				const samplecnt_t in_next = std::min (sr * 8 / 100, (next->oend - next->ostart) / 4);
 				Glide x;
@@ -634,6 +639,16 @@ glides (vector<Note> const& notes, samplecnt_t sr)
 				x.s1      = next->shift;
 				x.formant = (n->formant + next->formant) / 2;
 				x.open    = 0;
+				x.trans   = next->trans_edited () ? next->trans : 0.f;
+				x.c       = (n->oend + next->ostart) / 2;
+				x.na      = *n;
+				x.nb      = *next;
+				if (x.trans > 0) {
+					/* the zone covers the whole transition, but not more than half of either note */
+					const samplecnt_t half = (samplecnt_t) (x.trans * sr / 2) + sr / 100;
+					x.a = std::max (std::min (x.a, x.c - half), mid (n));
+					x.b = std::min (std::max (x.b, x.c + half), mid (next));
+				}
 				g.push_back (x);
 			}
 		} else if (moved (n) && !(next && next->ostart < n->oend)) {
@@ -644,6 +659,9 @@ glides (vector<Note> const& notes, samplecnt_t sr)
 			x.s0 = x.s1 = n->shift;
 			x.formant   = n->formant;
 			x.open      = 1;
+			x.trans     = 0;
+			x.c         = x.a;
+			x.na = x.nb = *n;
 			g.push_back (x);
 		}
 		if (!join_prev && moved (n) && !(prev && prev->oend > n->ostart)) {
@@ -654,6 +672,9 @@ glides (vector<Note> const& notes, samplecnt_t sr)
 			x.s0 = x.s1 = n->shift;
 			x.formant   = n->formant;
 			x.open      = -1;
+			x.trans     = 0;
+			x.c         = x.b;
+			x.na = x.nb = *n;
 			g.push_back (x);
 		}
 	}
@@ -689,13 +710,67 @@ glide_curve (Glide const& g, double pos)
 	return g.s0 + (g.s1 - g.s0) * smoothstep ((pos - g.a) / (double) (g.b - g.a));
 }
 
+/* sung pitch (MIDI note, 0 = unvoiced) at a master-source position, between analysis frames */
+static double
+pitch_at (Analysis const& an, double src)
+{
+	if (an.midi.empty ()) {
+		return 0;
+	}
+	const double f  = (src - an.origin) / an.hop;
+	const long   f0 = (long) std::floor (f);
+	if (f0 < 0 || f0 + 1 >= (long) an.midi.size ()) {
+		return 0;
+	}
+	const float a = an.midi[f0], b = an.midi[f0 + 1];
+	if (a <= 0 || b <= 0) {
+		return a > 0 ? a : b;
+	}
+	return a + (b - a) * (f - f0);
+}
+
+double
+glide_offset (Glide const& g, double pos, Analysis const* an)
+{
+	const double plain = glide_curve (g, pos);
+	if (g.trans <= 0 || !an) {
+		return plain;
+	}
+	/* where this output position was sung: inside a note its own map, between the two notes the gap
+	 * is mapped linearly (the same key points as the time warp) */
+	Note const& A = g.na;
+	Note const& B = g.nb;
+	double      src;
+	if (pos < A.oend) {
+		src = A.to_src (pos);
+	} else if (pos >= B.ostart) {
+		src = B.to_src (pos);
+	} else {
+		const double t = B.ostart > A.oend ? (pos - A.oend) / (double) (B.ostart - A.oend) : 0;
+		src = A.end + t * (B.start - A.end);
+	}
+	const double sung = pitch_at (*an, src);
+
+	const double half = std::max (1.0, g.trans * an->sr / 2.0);
+	const double t    = (pos - (g.c - half)) / (2 * half); /* 0 .. 1 across the transition */
+	const double lin  = g.s0 + (g.s1 - g.s0) * smoothstep (t);
+	if (sung <= 0 || t <= 0 || t >= 1) {
+		return lin;
+	}
+	/* the new pitch: an S-curve from one target to the other; at the window edges it fades into the
+	 * sung pitch (plus the note's shift), so vibrato does not jump there */
+	const double want = (A.pitch + A.shift) + ((B.pitch + B.shift) - (A.pitch + A.shift)) * smoothstep (t);
+	const double edge = std::min (1.0, std::min (t, 1 - t) / 0.25);
+	return lin + smoothstep (edge) * (want - sung - lin);
+}
+
 bool
-glide_at (vector<Glide> const& gl, double pos, samplecnt_t sr, double& shift, double& weight)
+glide_at (vector<Glide> const& gl, double pos, samplecnt_t sr, double& shift, double& weight, Analysis const* an)
 {
 	for (auto const& g : gl) {
 		const double x = std::max ((samplecnt_t) 32, sr / 100) / 2.0;
 		if (pos >= g.a - (g.open < 0 ? 0 : x) && pos < g.b + (g.open > 0 ? 0 : x)) {
-			shift  = glide_curve (g, pos);
+			shift  = glide_offset (g, pos, an);
 			weight = glide_weight (g, pos, sr);
 			return true;
 		}
@@ -733,8 +808,18 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 		}
 		const samplepos_t s = std::max ((samplepos_t) 0, ga - margin);
 		const samplepos_t e = std::min (len, gb + margin);
+		/* the slow part (from one note's shift to the next one's) is pitch-shifted, a new transition on top
+		 * of it is bent in: quicker than Rubber Band follows a changing ratio */
 		shift_span (in, s, e - s, sr, [&] (samplecnt_t p) { return std::pow (2.0, glide_curve (g, origin + s + p) / 12.0); },
 		            g.s0 != g.s1, g.formant, shifted);
+		if (g.trans > 0) {
+			const samplepos_t ba = std::max (ga, s);
+			const samplepos_t bb = std::min (gb, e);
+			bend_span (shifted, ba - s, bb - s, [&] (samplepos_t i) {
+				const double pos = origin + ba + i;
+				return 100.0 * (glide_offset (g, pos, &an) - glide_curve (g, pos));
+			});
+		}
 		const samplepos_t ws = std::max (s, ga - xfade);
 		const samplepos_t we = std::min (e, gb + xfade);
 		for (samplepos_t i = ws; i < we; ++i) {

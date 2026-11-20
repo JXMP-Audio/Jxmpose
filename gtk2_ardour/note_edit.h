@@ -59,13 +59,15 @@ struct Note {
 	float drift;                ///< 0..1: how much of the slow pitch drift inside the note is flattened (vibrato stays)
 	float gain;                 ///< dB
 	float formant;              ///< formant shift, semitones (0 = formants stay where they were sung)
+	float trans;                ///< transition from the previous note: its length in seconds, 0 = as it was sung
 
-	Note () : start (0), end (0), ostart (0), oend (0), pitch (0), shift (0), drift (0), gain (0), formant (0) {}
+	Note () : start (0), end (0), ostart (0), oend (0), pitch (0), shift (0), drift (0), gain (0), formant (0), trans (0) {}
 	float target () const { return pitch + shift; }
 	bool pitch_edited () const { return shift > 0.001f || shift < -0.001f || drift > 0.001f || formant > 0.001f || formant < -0.001f; }
 	bool time_edited () const { return ostart != start || oend != end; }
 	bool gain_edited () const { return gain > 0.01f || gain < -0.01f; }
-	bool edited () const { return pitch_edited () || time_edited () || gain_edited (); }
+	bool trans_edited () const { return trans > 0.0005f; }
+	bool edited () const { return pitch_edited () || time_edited () || gain_edited () || trans_edited (); }
 	/** output position of a source position inside the note */
 	double to_out (double src) const { return end > start ? ostart + (src - start) * (double) (oend - ostart) / (end - start) : ostart; }
 	double to_src (double out) const { return oend > ostart ? start + (out - ostart) * (double) (end - start) / (oend - ostart) : start; }
@@ -108,21 +110,30 @@ XMLNode* notes_to_xml (std::vector<Note> const&);
 /** The audio between the notes follows their pitch edits (output positions, semitones):
  *  - two notes less than 300 ms apart are joined by a glide from the shift of the first to the shift of the
  *    second; it reaches into both notes (up to 80 ms, a quarter of the note), because the slide from one
- *    note to the next usually lies inside the notes, and replaces them there,
+ *    note to the next usually lies inside the notes, and replaces them there. With a transition length set
+ *    on the second note (Note::trans) the sung slide is replaced by an S-curve of that length from the
+ *    first note's target pitch to the second one's, centred between them,
  *  - before / after a note without such a neighbour (a scoop into it, its tail) the note's shift is kept for
  *    150 ms and fades back to the untouched audio over the outer half (`open` = -1 at a, +1 at b, 0 joined).
- *  Only where a neighbouring note has a new pitch or formant. */
+ *  Only where a neighbouring note has a new pitch, formant or transition. */
 struct Glide {
 	ARDOUR::samplepos_t a, b;
 	float               s0, s1;
 	float               formant;
 	int                 open;
+	float               trans;   ///< seconds, 0 = keep the sung slide
+	ARDOUR::samplepos_t c;       ///< centre of the transition (output position)
+	Note                na, nb;  ///< the joined notes (open: both the note itself)
 };
 std::vector<Glide> glides (std::vector<Note> const&, ARDOUR::samplecnt_t sr);
 /** 0..1: how much of the glided audio is used at output position `pos` (10 ms crossfades at joined ends) */
 double glide_weight (Glide const&, double pos, ARDOUR::samplecnt_t sr);
-/** The glide covering output position `pos`: its shift there (semitones) and weight; false if there is none */
-bool glide_at (std::vector<Glide> const&, double pos, ARDOUR::samplecnt_t sr, double& shift, double& weight);
+/** Semitones the glide moves the audio at output position `pos` by; `an` (the pitch track) is needed for a
+ *  set transition length, without it the plain glide is returned */
+double glide_offset (Glide const&, double pos, Analysis const* an);
+/** The glide covering output position `pos`: its offset there (semitones) and weight; false if there is none */
+bool glide_at (std::vector<Glide> const&, double pos, ARDOUR::samplecnt_t sr, double& shift, double& weight,
+               Analysis const* an = 0);
 
 /** Apply the edited notes to `in` (frames of all channels, from master position `origin`). First the timing:
  *  only the stretches of audio around moved / resized notes are time-stretched (Rubber Band, key frames at the

@@ -108,7 +108,7 @@ private:
 	float  _lo;     ///< MIDI note at the bottom of the grid
 
 	/* mouse */
-	enum Drag { NoDrag, Undecided, PitchDrag, TimeDrag, StartDrag, EndDrag, RectDrag };
+	enum Drag { NoDrag, Undecided, PitchDrag, TimeDrag, StartDrag, EndDrag, RectDrag, TransDrag };
 	Drag   _drag;
 	int    _grab;
 	double _x0, _y0, _x1, _y1;
@@ -116,6 +116,17 @@ private:
 	std::vector<NoteEdit::Note> _base_notes;
 	bool   _moved;
 	double _mouse_x, _mouse_y;
+	int    _hover_trans; ///< note whose transition handle is under the mouse, -1 none
+	float  _trans_base;
+
+	/* transition handles: one between two notes less than 300 ms apart, on the second note */
+	struct TransHandle {
+		int    note; ///< the second note (it holds the transition length)
+		double x, y;
+	};
+	std::vector<TransHandle> transition_handles () const;
+	int  trans_handle_at (double x, double y) const;
+	void draw_trans_handles (cairo_t*);
 
 	sigc::connection _timer;
 	ARDOUR::samplepos_t _last_playhead;

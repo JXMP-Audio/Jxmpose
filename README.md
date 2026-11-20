@@ -73,7 +73,9 @@ Ardour project.
   by an amount (vibrato stays); Level and Formant set the loudness and the
   formants (voice character) of the selected notes. The slide between two
   neighbouring notes glides from one edit to the other, a scoop into a note
-  and its tail move with it. Only the audio
+  and its tail move with it. A handle in the middle of each slide sets how
+  long it takes (drag left = quicker, right = slower, 5–500 ms;
+  double-click = as sung). Only the audio
   around moved notes is time-stretched, each re-pitched note is shifted on
   its own with formants preserved (Rubber Band R3) and crossfaded into the
   untouched audio; the original recording is never changed, every edit is
