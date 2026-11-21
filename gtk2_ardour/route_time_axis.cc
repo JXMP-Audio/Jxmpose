@@ -1388,8 +1388,7 @@ RouteTimeAxisView::name_entry_changed (string const& str)
 		ARDOUR_UI::instance()->popup_error (string_compose (_("The name \"%1\" is reserved for %2"), x, PROGRAM_NAME));
 		return false;
 	} else if (RouteUI::verify_new_route_name (x)) {
-		_route->set_name (x);
-		return true;
+		return RouteUI::set_route_name (_route, x);
 	}
 
 	return false;
@@ -2372,12 +2371,12 @@ RouteTimeAxisView::can_edit_name () const
 		return false;
 	}
 
-	/* we do not allow track name changes if it is record enabled */
+	/* a rec-armed track is disarmed for the rename (RouteUI::set_route_name), not while it records */
 	std::shared_ptr<Track> trk (std::dynamic_pointer_cast<Track> (_route));
 	if (!trk) {
 		return true;
 	}
-	return !trk->rec_enable_control()->get_value();
+	return !(trk->rec_enable_control()->get_value() && _session->actively_recording ());
 }
 
 void

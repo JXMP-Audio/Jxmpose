@@ -182,6 +182,9 @@ public:
 	static Gtkmm2ext::ActiveState mute_active_state (ARDOUR::Session*, std::shared_ptr<ARDOUR::Stripable>);
 
 	static bool verify_new_route_name (const std::string& name);
+	/** rename a route; a rec-armed track (that cannot be renamed) is disarmed for it and armed again,
+	 *  unless it is recording right now */
+	static bool set_route_name (std::shared_ptr<ARDOUR::Route>, std::string const& name);
 
 protected:
 	virtual void set_color (uint32_t c);

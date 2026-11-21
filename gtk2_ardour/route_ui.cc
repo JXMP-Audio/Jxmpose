@@ -1775,6 +1775,36 @@ RouteUI::verify_new_route_name (const std::string& name)
 	return false;
 }
 
+bool
+RouteUI::set_route_name (std::shared_ptr<ARDOUR::Route> r, std::string const& name)
+{
+	std::shared_ptr<ARDOUR::Track> trk = std::dynamic_pointer_cast<ARDOUR::Track> (r);
+	if (!trk || !trk->rec_enable_control ()->get_value ()) {
+		return r->set_name (name);
+	}
+	if (trk->session ().actively_recording ()) {
+		ARDOUR_UI::instance ()->popup_error (_("A track cannot be renamed while it is recording."));
+		return false;
+	}
+	/* the takes are named after the track: disarm (done in the next process cycle), rename, arm again */
+	trk->rec_enable_control ()->set_value (0, PBD::Controllable::NoGroup);
+	std::weak_ptr<ARDOUR::Track> wt (trk);
+	std::shared_ptr<int>         tries (new int (0));
+	Glib::signal_timeout ().connect ([wt, name, tries] () {
+		std::shared_ptr<ARDOUR::Track> t = wt.lock ();
+		if (!t) {
+			return false;
+		}
+		if (t->rec_enable_control ()->get_value () && ++*tries < 100) {
+			return true;
+		}
+		t->set_name (name);
+		t->rec_enable_control ()->set_value (1, PBD::Controllable::NoGroup);
+		return false;
+	}, 10);
+	return true;
+}
+
 void
 RouteUI::route_rename ()
 {
@@ -1800,7 +1830,7 @@ RouteUI::route_rename ()
 			name_prompter.hide ();
 			if (result.length()) {
 				if (verify_new_route_name (result)) {
-					_route->set_name (result);
+					set_route_name (_route, result);
 					done = true;
 				} else {
 					/* back to name prompter */
