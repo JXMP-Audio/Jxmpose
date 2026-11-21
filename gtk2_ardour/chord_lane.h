@@ -116,7 +116,9 @@ private:
 	int64_t selection_end () const;
 	void    select_starting (int64_t from, int64_t to);
 	int     _hover;
-	int     _drag;       ///< 0 none, 1 move, 2 left edge, 3 right edge, 4 ruler
+	int     _drag;       ///< 0 none, 1 move, 2 left edge, 3 right edge, 4 ruler, 5 rubber band
+	double  _band_x1, _band_y0, _band_y1;
+	std::set<int64_t> _band_base; ///< selection before a Ctrl rubber band
 	int     _drag_block;
 	double  _drag_x0;
 	int64_t _drag_delta;

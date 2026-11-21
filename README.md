@@ -56,7 +56,8 @@ Ardour project.
   voicing, slash chords too). Drop pads or circle chords on it to write
   them (onto a block: replace it), drag a block to move it, its edges to
   change its length (snapped to beats, Shift: sixteenths), Delete removes
-  it, Ctrl/Shift-click selects more, Ctrl+A all, Ctrl+C / X / V copy, cut
+  it, drag on empty space selects with a rubber band (Ctrl: adds),
+  Ctrl/Shift-click selects more, Ctrl+A all, Ctrl+C / X / V copy, cut
   and paste (after the selection, else at the playhead), Ctrl+D duplicates,
   Ctrl+Z undoes, double-click on empty space writes the selected pad,
   a click on the ruler moves the playhead, Ctrl+wheel zooms.

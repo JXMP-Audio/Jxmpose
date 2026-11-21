@@ -104,6 +104,9 @@ ChordLane::ChordLane (ChordPads& p)
 	, _drag_delta (0)
 	, _dragged (false)
 	, _drop_tick (-1)
+	, _band_x1 (0)
+	, _band_y0 (0)
+	, _band_y1 (0)
 {
 	add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK
 	            | Gdk::SCROLL_MASK | Gdk::KEY_PRESS_MASK | Gdk::FOCUS_CHANGE_MASK);
@@ -343,6 +346,19 @@ ChordLane::on_expose_event (GdkEventExpose* ev)
 		show_text (cr, *this, Glib::Markup::escape_text (nn), "Sans 8", x0 + 6, top + bh - 12, x1 - x0 - 12, 0xb4bbc4, true);
 	}
 
+	/* the rubber band */
+	if (_drag == 5 && _dragged) {
+		const double x = std::min (_drag_x0, _band_x1), w = std::abs (_band_x1 - _drag_x0);
+		const double y = std::max ((double) ruler_h, std::min (_band_y0, _band_y1));
+		const double h = std::min (H, std::max (_band_y0, _band_y1)) - y;
+		cairo_rectangle (cr, x + 0.5, y + 0.5, w, h);
+		rgb (cr, 0x4a90e2, 0.2);
+		cairo_fill_preserve (cr);
+		rgb (cr, 0x7fb2ee);
+		cairo_set_line_width (cr, 1);
+		cairo_stroke (cr);
+	}
+
 	/* where a dragged pad would land */
 	if (_drop_tick >= 0) {
 		const double x = tick_x (_drop_tick);
@@ -404,10 +420,16 @@ ChordLane::on_button_press_event (GdkEventButton* ev)
 	const bool toggle = ev->state & Gtkmm2ext::Keyboard::PrimaryModifier;
 	const bool range  = (ev->state & GDK_SHIFT_MASK) && _sel >= 0 && _sel < (int) _blocks.size ();
 	if (b < 0) {
+		/* empty space: a rubber band selects the chords it touches (Ctrl: adds to the selection) */
 		if (!toggle && !range) {
 			_selection.clear ();
 			_sel = -1;
 		}
+		_band_base = _selection;
+		_drag      = 5;
+		_drag_x0   = _band_x1 = ev->x;
+		_band_y0   = _band_y1 = ev->y;
+		_dragged   = false;
 	} else if (toggle) {
 		if (is_sel (b)) {
 			_selection.erase (_blocks[b].start);
@@ -438,6 +460,21 @@ bool
 ChordLane::on_motion_notify_event (GdkEventMotion* ev)
 {
 	if (_drag == 4) {
+		return true;
+	}
+	if (_drag == 5) {
+		_band_x1 = ev->x;
+		_band_y1 = ev->y;
+		_dragged = _dragged || std::abs (ev->x - _drag_x0) > 3;
+		const int64_t a = x_tick (std::min (_drag_x0, _band_x1)), z = x_tick (std::max (_drag_x0, _band_x1));
+		_selection      = _band_base;
+		for (size_t i = 0; i < _blocks.size (); ++i) {
+			if (_blocks[i].end > a && _blocks[i].start < z) {
+				_selection.insert (_blocks[i].start);
+				_sel = (int) i;
+			}
+		}
+		queue_draw ();
 		return true;
 	}
 	if (_drag && _drag_block >= 0) {
