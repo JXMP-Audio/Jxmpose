@@ -92,6 +92,7 @@ extern VST3PluginUI* create_mac_vst3_gui (std::shared_ptr<ARDOUR::PlugInsertBase
 #include "plugin_eq_gui.h"
 #include "plugin_presets_ui.h"
 #include "plugin_ui.h"
+#include "jx_plugin_ui.h"
 #include "processor_box.h"
 #include "public_editor.h"
 #include "timers.h"
@@ -165,6 +166,16 @@ PluginUIWindow::PluginUIWindow (std::shared_ptr<PlugInsertBase> pib,
 #endif
 				throw failed_constructor ();
 		}
+	}
+
+	if (!have_gui && editor && JxPluginUI::handles (pib)) {
+		/* JX plugins: JXMP hardware panel ("Edit with generic controls" still gives the generic one) */
+		JxPluginUI* pu = new JxPluginUI (pib);
+		_pluginui      = pu;
+		_pluginui->KeyboardFocused.connect (sigc::mem_fun (*this, &PluginUIWindow::keyboard_focused));
+		add (*pu);
+		set_wmclass (X_("ardour_plugin_editor"), PROGRAM_NAME);
+		have_gui = true;
 	}
 
 	if (!have_gui) {
