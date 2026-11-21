@@ -153,7 +153,7 @@ Mixer_UI::Mixer_UI ()
 	, ignore_plugin_reorder (false)
 	, _in_group_rebuild_or_clear (false)
 	, _route_deletion_in_progress (false)
-	, plugin_list_mode (PLM_Favorite)
+	, plugin_list_mode (PLM_SearchAll) /* all plugins until the session says otherwise */
 	, _maximised (false)
 	, _strip_selection_change_without_scroll (false)
 	, _selection (*this, *this)
@@ -3251,7 +3251,7 @@ Mixer_UI::update_sidebar_pagers (guint page)
 		t.first->set_active (t.second == cur);
 	}
 	if (page == 0 && !_studio_tabs.empty ()) {
-		_studio_plugin_mode.set_active (label);
+		_studio_plugin_mode.set_active (plugin_list_mode == PLM_SearchAll ? _("All Plugins") : label);
 	}
 }
 
@@ -3289,10 +3289,12 @@ Mixer_UI::setup_studio_sidebar ()
 	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Favorite Plugins"), [this] () { set_plugin_list_mode (PLM_Favorite); update_sidebar_pagers (0); }));
 	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Recent Plugins"),   [this] () { set_plugin_list_mode (PLM_Recent); update_sidebar_pagers (0); }));
 	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Top-10 Plugins"),   [this] () { set_plugin_list_mode (PLM_TopHits); update_sidebar_pagers (0); }));
-	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Search All Plugins"), [this] () { set_plugin_list_mode (PLM_SearchAll); update_sidebar_pagers (0); }));
-	_studio_plugin_mode.set_sizing_texts ({ _("Search All Plugins") });
+	_studio_plugin_mode.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("All Plugins"), [this] () { set_plugin_list_mode (PLM_SearchAll); update_sidebar_pagers (0); }));
+	_studio_plugin_mode.set_sizing_texts ({ _("Favorite Plugins") });
 	favorite_plugins_vbox.pack_start (_studio_plugin_mode, false, false);
 	favorite_plugins_vbox.reorder_child (_studio_plugin_mode, 0);
+	/* the search right under the list choice, not at the bottom */
+	favorite_plugins_vbox.reorder_child (favorite_plugins_search_hbox, 1);
 	_studio_plugin_mode.show ();
 
 	list_vpacker.remove (_mixer_scene_spacer);
@@ -3367,8 +3369,9 @@ Mixer_UI::refiller (PluginInfoList& result, const PluginInfoList& plugs)
 				maybe_show |= match_search_strings (tags, searchstr);
 			}
 		} else if (plm == PLM_SearchAll) {
-			maybe_show = false;
-			if (searchstr.length() > 2) {
+			/* all plugins; typing narrows them down from the first letter */
+			maybe_show = searchstr.empty ();
+			if (!searchstr.empty ()) {
 				/* check name */
 				std::string compstr = (*i)->name;
 				setup_search_string (compstr);

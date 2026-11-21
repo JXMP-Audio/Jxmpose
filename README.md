@@ -34,7 +34,9 @@ Ardour project.
   *Edit Notes*.
 - **Mixer** — console-style strips with collapsible racks (remembered),
   R/W automation buttons, the channel name at the bottom in track colour, a
-  built-in channel strip in every strip, sidebar tabs, mixer scenes.
+  built-in channel strip in every strip, sidebar tabs, mixer scenes. The
+  *Plugins* tab lists all plugins (or favorites, recent, top-10) with the
+  search right under it, from the first letter; drag one onto a strip.
 - **Track folders** — route groups shown as collapsible folders with
   subfolders; a collapsed folder keeps its instrument bus visible.
 - **MIDI editor** — in its own window or in the editor's bottom pane,
