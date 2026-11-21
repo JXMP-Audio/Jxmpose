@@ -37,7 +37,7 @@ namespace ARDOUR {
 /** Chord pads (like Cubase's): a grid of pads, each holding a chord built from a root, a chord type, a
  *  tension and a bass note, with an inversion and an octave. Holding a pad plays the chord on the track's
  *  instrument, dragging it onto the note editor writes it there. A key fills the pads with its chords and
- *  names them by degree. The pads are shared by all MIDI editors. */
+ *  names them by degree (major, minor, the modes and more scales). The pads are shared by all MIDI editors. */
 class ChordPads : public Gtk::VBox
 {
 public:
@@ -86,7 +86,7 @@ private:
 	static std::vector<Chord> _pads;
 	static int                _len;       ///< index into the lengths
 	static int                _key_root;  ///< key of the pads (for Fill Pads and the degrees)
-	static bool               _key_minor;
+	static int                _scale;     ///< index into the scales
 
 	int                                         _sel;
 	std::shared_ptr<ARDOUR::MidiTrack>          _track;

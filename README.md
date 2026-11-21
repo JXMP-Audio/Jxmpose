@@ -37,8 +37,11 @@ Ardour project.
   a bass note (picked on a keyboard), a type (Maj, Min, Dim, Aug, Sus2,
   Sus4, 5), a tension (6, 7, maj7, 9, 11, 13, b9, #9, #11, b13, 6/9 …), an
   inversion and an octave; a keyboard shows the notes of the chord. Pick a
-  key and *Fill Pads* puts its chords on the pads (named by degree, spelled
-  with flats in flat keys). Hold a pad to hear it on the track's
+  key and a scale (major, minor, the modes Dorian … Locrian, harmonic and
+  melodic minor, harmonic major, Phrygian dominant, Lydian dominant,
+  altered, Hungarian, Neapolitan, double harmonic, Persian, enigmatic) and
+  *Fill Pads* builds its chords (a triad on every degree, the seventh chord
+  on the fifth), named by degree and spelled with the key's sharps or flats. Hold a pad to hear it on the track's
   instrument, drag it into the notes to write it there (snapped to the
   grid) or use *Insert at Playhead*.
   In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and

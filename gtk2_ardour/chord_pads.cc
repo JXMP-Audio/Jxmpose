@@ -92,8 +92,35 @@ const struct { const char* label; int64_t ticks; } lengths[] = {
 };
 const int n_lengths = sizeof (lengths) / sizeof (lengths[0]);
 
-const int major_scale[7] = { 0, 2, 4, 5, 7, 9, 11 };
-const int minor_scale[7] = { 0, 2, 3, 5, 7, 8, 10 };
+/* seven-note scales: the pads are built from them by stacking thirds */
+struct Scale {
+	const char* name;
+	int         st[7];
+};
+const Scale scales[] = {
+	{ "Major (Ionian)",     { 0, 2, 4, 5, 7, 9, 11 } },
+	{ "Dorian",             { 0, 2, 3, 5, 7, 9, 10 } },
+	{ "Phrygian",           { 0, 1, 3, 5, 7, 8, 10 } },
+	{ "Lydian",             { 0, 2, 4, 6, 7, 9, 11 } },
+	{ "Mixolydian",         { 0, 2, 4, 5, 7, 9, 10 } },
+	{ "Minor (Aeolian)",    { 0, 2, 3, 5, 7, 8, 10 } },
+	{ "Locrian",            { 0, 1, 3, 5, 6, 8, 10 } },
+	{ "",                   { 0 } }, /* separator */
+	{ "Harmonic Minor",     { 0, 2, 3, 5, 7, 8, 11 } },
+	{ "Melodic Minor",      { 0, 2, 3, 5, 7, 9, 11 } },
+	{ "Harmonic Major",     { 0, 2, 4, 5, 7, 8, 11 } },
+	{ "Phrygian Dominant",  { 0, 1, 4, 5, 7, 8, 10 } },
+	{ "Lydian Dominant",    { 0, 2, 4, 6, 7, 9, 10 } },
+	{ "Altered",            { 0, 1, 3, 4, 6, 8, 10 } },
+	{ "Dorian #4",          { 0, 2, 3, 6, 7, 9, 10 } },
+	{ "Hungarian Minor",    { 0, 2, 3, 6, 7, 8, 11 } },
+	{ "Neapolitan Minor",   { 0, 1, 3, 5, 7, 8, 11 } },
+	{ "Neapolitan Major",   { 0, 1, 3, 5, 7, 9, 11 } },
+	{ "Double Harmonic",    { 0, 1, 4, 5, 7, 8, 11 } },
+	{ "Persian",            { 0, 1, 4, 5, 6, 8, 11 } },
+	{ "Enigmatic",          { 0, 1, 4, 6, 8, 10, 11 } },
+};
+const int n_scales = sizeof (scales) / sizeof (scales[0]);
 
 ArdourButton*
 small_button (std::string const& label, int width = 40)
@@ -454,15 +481,34 @@ std::vector<ChordPads::Chord> ChordPads::_pads = {
 };
 int  ChordPads::_len       = 0;
 int  ChordPads::_key_root  = 0;
-bool ChordPads::_key_minor = false;
+int  ChordPads::_scale     = 0;
 
 const char*
 ChordPads::pc_name (int pc)
 {
-	/* keys written with flats: F Bb Eb Ab Db (major), D G C F Bb (minor) */
-	static const bool flat_major[12] = { false, true, false, true, false, true, false, false, true, false, true, false };
-	static const bool flat_minor[12] = { true, false, true, false, false, true, false, true, false, false, true, false };
-	const bool flats = _key_minor ? flat_minor[_key_root] : flat_major[_key_root];
+	/* the spelling (sharps or flats) that names the seven notes of the scale with seven different letters;
+	 * when both do (or neither), flats for the flat keys */
+	static int cache_root = -1, cache_scale = -1;
+	static bool flats = false;
+	if (cache_root != _key_root || cache_scale != _scale) {
+		cache_root  = _key_root;
+		cache_scale = _scale;
+		auto letters = [] (const char* const* names) {
+			std::set<char> l;
+			for (int i = 0; i < 7; ++i) {
+				l.insert (names[(_key_root + scales[_scale].st[i]) % 12][0]);
+			}
+			return (int) l.size ();
+		};
+		const int sharp_letters = letters (note_names);
+		const int flat_letters  = letters (flat_names);
+		if (sharp_letters != flat_letters) {
+			flats = flat_letters > sharp_letters;
+		} else {
+			/* F and the black keys read as flat keys (F, Bb, Eb, Ab, Db, Gb) */
+			flats = _key_root == 5 || _key_root == 10 || _key_root == 3 || _key_root == 8 || _key_root == 1 || _key_root == 6;
+		}
+	}
 	pc = ((pc % 12) + 12) % 12;
 	return flats ? flat_names[pc] : note_names[pc];
 }
@@ -495,14 +541,23 @@ ChordPads::ChordPads ()
 	_key_dropdown.set_name ("generic button");
 	_key_dropdown.set_size_request (52, -1);
 	top->pack_start (_key_dropdown, false, false);
-	_scale_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Major"), [this] () { _key_minor = false; update (); }));
-	_scale_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_("Minor"), [this] () { _key_minor = true; update (); }));
+	for (int i = 0; i < n_scales; ++i) {
+		if (!scales[i].name[0]) {
+			_scale_dropdown.add_separator ();
+			continue;
+		}
+		_scale_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_(scales[i].name), [this, i] () {
+			_scale = i;
+			update ();
+		}));
+	}
 	_scale_dropdown.set_name ("generic button");
-	_scale_dropdown.set_size_request (72, -1);
+	_scale_dropdown.set_size_request (130, -1);
+	ArdourWidgets::set_tooltip (_scale_dropdown, _("Scale of the key: Fill Pads builds its chords, the pads show their degree in it"));
 	top->pack_start (_scale_dropdown, false, false);
 	_fill_button.set_name ("generic button");
 	_fill_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (_fill_button, _("Put the chords of the key on the pads: I ii iii IV V vi vii and V7 (minor: i ii III iv v VI VII V7)"));
+	ArdourWidgets::set_tooltip (_fill_button, _("Put the chords of the scale on the pads: a triad on each of its seven degrees, and the seventh chord on the fifth degree"));
 	_fill_button.signal_clicked.connect (sigc::mem_fun (*this, &ChordPads::fill_from_key));
 	top->pack_start (_fill_button, false, false, 4);
 	Gtk::Label* hint = manage (new Gtk::Label ());
@@ -740,12 +795,26 @@ std::string
 ChordPads::degree (Chord const& c)
 {
 	static const char* const roman[7] = { "I", "II", "III", "IV", "V", "VI", "VII" };
-	int const* scale = _key_minor ? minor_scale : major_scale;
-	const int  rel   = (c.root - _key_root + 12) % 12;
-	int        d     = -1;
+	int const*  scale = scales[_scale].st;
+	const int   rel   = (c.root - _key_root + 12) % 12;
+	int         d     = -1;
+	std::string acc;
 	for (int i = 0; i < 7; ++i) {
 		if (scale[i] == rel) {
 			d = i;
+		}
+	}
+	/* a root outside the scale: flat of the degree above it (bVII), else sharp of the one below */
+	for (int i = 0; d < 0 && i < 7; ++i) {
+		if (scale[i] == (rel + 1) % 12) {
+			d   = i;
+			acc = "b";
+		}
+	}
+	for (int i = 0; d < 0 && i < 7; ++i) {
+		if (scale[i] == (rel + 11) % 12) {
+			d   = i;
+			acc = "#";
 		}
 	}
 	if (d < 0) {
@@ -763,7 +832,7 @@ ChordPads::degree (Chord const& c)
 	} else {
 		r += tn;
 	}
-	return r;
+	return acc + r;
 }
 
 std::vector<uint8_t>
@@ -817,27 +886,40 @@ ChordPads::edit (int what, int value)
 void
 ChordPads::fill_from_key ()
 {
-	/* type and tension per degree; the eighth pad is the dominant seventh (harmonic minor's V7 in minor) */
-	static const int maj_type[7] = { 0, 1, 1, 0, 0, 1, 2 };
-	static const int min_type[7] = { 1, 2, 0, 1, 1, 0, 0 };
-	int const* scale = _key_minor ? minor_scale : major_scale;
-	int const* type  = _key_minor ? min_type : maj_type;
-	for (int d = 0; d < 7; ++d) {
-		Chord& c    = _pads[d];
-		c.root      = (_key_root + scale[d]) % 12;
-		c.type      = type[d];
-		c.tension   = type[d] == 2 ? 2 : 0; /* the diminished one as m7b5 */
+	/* stack thirds inside the scale: the third and fifth give the triad, the seventh the seventh chord */
+	int const* st = scales[_scale].st;
+	auto above = [st] (int d, int k) { return (st[(d + k) % 7] - st[d] + 12) % 12; };
+	auto build = [&] (int d, bool seventh) {
+		Chord c;
+		const int third = above (d, 2), fifth = above (d, 4), sev = above (d, 6);
+		c.root    = (_key_root + st[d]) % 12;
+		c.tension = 0;
+		if (third == 4 && fifth == 7) {
+			c.type = 0;
+		} else if (third == 3 && fifth == 7) {
+			c.type = 1;
+		} else if (third == 3 && fifth == 6) {
+			c.type = 2;
+			seventh = true; /* the diminished triad as m7b5 / dim7, as it is mostly used */
+		} else if (third == 4 && fifth == 8) {
+			c.type = 3;
+		} else if (fifth == 7) {
+			c.type = third == 2 ? 4 : 5; /* no third in the scale there: sus */
+		} else {
+			c.type = third >= 4 ? 0 : 1; /* odd fifths (exotic scales): the nearest triad */
+		}
+		if (seventh) {
+			c.tension = sev == 11 ? 3 : (sev == 10 ? 2 : (sev == 9 && c.type == 2 ? 4 : 0));
+		}
 		c.bass      = -1;
 		c.inversion = 0;
 		c.octave    = c.root >= 7 ? -1 : 0; /* roots between G3 and F#4 */
+		return c;
+	};
+	for (int d = 0; d < 7; ++d) {
+		_pads[d] = build (d, false);
 	}
-	Chord& v7    = _pads[7];
-	v7.root      = (_key_root + 7) % 12;
-	v7.type      = 0;
-	v7.tension   = 2;
-	v7.bass      = -1;
-	v7.inversion = 0;
-	v7.octave    = v7.root >= 7 ? -1 : 0;
+	_pads[7] = build (4, true);
 	update ();
 }
 
@@ -862,7 +944,7 @@ ChordPads::update ()
 	}
 	_oct_label.set_text (c.octave > 0 ? "+" + std::to_string (c.octave) : std::to_string (c.octave));
 	_key_dropdown.set_text (pc_name (_key_root));
-	_scale_dropdown.set_text (_key_minor ? _("Minor") : _("Major"));
+	_scale_dropdown.set_text (_(scales[_scale].name));
 	_chord_keys->set (chord_pitches (c), c.bass >= 0);
 	_grid->queue_draw ();
 }
