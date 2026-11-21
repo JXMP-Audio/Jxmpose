@@ -57,10 +57,13 @@ public:
 	/** "Insert at Playhead" was clicked with this pad selected */
 	sigc::signal<void, int> InsertRequested;
 
-	/** drag and drop target of a pad; the data is the pad number */
+	/** drag and drop target of a pad or a chord of the circle of fifths; the data is the pad number, or
+	 *  "c<root>:<type>:<tension>:<octave>" for a chord of the circle */
 	static const char* drag_target () { return "application/x-jxmpose-chord-pad"; }
+	/** notes and name of dragged chord data; false if it is not a chord */
+	bool drag_chord (std::string const& data, std::vector<uint8_t>& notes, std::string& name) const;
 
-	static const int n_pads = 8;
+	static const int n_pads = 16; ///< 9 in the lower row, 7 above them (like Cubase)
 
 	struct Chord {
 		int root;      ///< 0 = C .. 11 = B
@@ -72,15 +75,22 @@ public:
 	};
 	static std::vector<int> chord_pitches (Chord const&);
 	static std::string      chord_name (Chord const&);
+	/** the name as pango markup, Cubase style (B\u266dmin<sup>7</sup>) */
+	static std::string      chord_markup (Chord const&, int spelling = -1); ///< spelling: -1 the key's, 0 sharps, 1 flats
 	/** degree in the current key (I, ii, V7 ...), empty outside it */
 	static std::string      degree (Chord const&);
 	static Chord const&     pad (int i) { return _pads[i]; }
 	/** name of a pitch class, with flats in flat keys (Bb, Eb ...) and sharps otherwise */
 	static const char*      pc_name (int pc);
 
+	/** how well `next` follows `last` by the circle of fifths: 3 best (a step around the circle or its
+	 *  relative), 2 good (two steps), 1 possible (three), 0 far; -1 the same chord */
+	static int fit (Chord const& last, Chord const& next);
+
 	class PadGrid;
 	class KeyPicker;
 	class ChordKeys;
+	class Circle;
 
 private:
 	static std::vector<Chord> _pads;
@@ -95,13 +105,21 @@ private:
 	int                                         _channel;
 	sigc::connection                            _stop_timer;
 
+	Chord                                       _last;     ///< the chord heard last (pad or circle)
+	bool                                        _has_last;
+	void set_last (Chord const&);
+
 	PadGrid*                                    _grid;
+	Circle*                                     _circle;
 	KeyPicker*                                  _root_picker;
 	KeyPicker*                                  _bass_picker;
 	ChordKeys*                                  _chord_keys;
 	ArdourWidgets::ArdourDropdown               _key_dropdown;
 	ArdourWidgets::ArdourDropdown               _scale_dropdown;
 	ArdourWidgets::ArdourButton                 _fill_button;
+	ArdourWidgets::ArdourButton                 _edit_button;
+	Gtk::VBox                                   _editor_box;
+	void show_editor (bool);
 	ArdourWidgets::ArdourButton                 _no_bass_button;
 	std::vector<ArdourWidgets::ArdourButton*>   _type_buttons;
 	std::vector<ArdourWidgets::ArdourButton*>   _tension_buttons;
@@ -122,5 +140,6 @@ private:
 	void pad_pressed (int pad);
 	void pad_released ();
 	void sound (int pad);
+	void play_chord (Chord const&);
 	void silence ();
 };

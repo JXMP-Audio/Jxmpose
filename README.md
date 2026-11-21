@@ -33,17 +33,24 @@ Ardour project.
   subfolders; a collapsed folder keeps its instrument bus visible.
 - **MIDI editor** — switch between *Key*, *Drum* (one row per drum sound),
   *Score* (music notation, also as drum notation) and *Chord Pads* for the
-  same region. Chord Pads: eight pads, each a chord built from a root and
-  a bass note (picked on a keyboard), a type (Maj, Min, Dim, Aug, Sus2,
-  Sus4, 5), a tension (6, 7, maj7, 9, 11, 13, b9, #9, #11, b13, 6/9 …), an
-  inversion and an octave; a keyboard shows the notes of the chord. Pick a
-  key and a scale (major, minor, the modes Dorian … Locrian, harmonic and
-  melodic minor, harmonic major, Phrygian dominant, Lydian dominant,
-  altered, Hungarian, Neapolitan, double harmonic, Persian, enigmatic) and
-  *Fill Pads* builds its chords (a triad on every degree, the seventh chord
-  on the fifth), named by degree and spelled with the key's sharps or flats. Hold a pad to hear it on the track's
-  instrument, drag it into the notes to write it there (snapped to the
-  grid) or use *Insert at Playhead*.
+  same region. Chord Pads (laid out like Cubase's): sixteen pads in two
+  rows, each a chord built from a root and a bass note, a type (Maj, Min,
+  Dim, Aug, Sus2, Sus4, 5), a tension (6, 7, maj7, 9, 11, 13, b9, #9, #11,
+  b13, 6/9 …), an inversion and an octave (*Edit Chord* or double-click a
+  pad opens the editor). Pick a key and a scale (major, minor, the modes
+  Dorian … Locrian, harmonic and melodic minor, harmonic major, Phrygian
+  dominant, Lydian dominant, altered, Hungarian, Neapolitan, double
+  harmonic, Persian, enigmatic) and *Fill Pads* builds its chords (the
+  triads and seventh chords of every degree, the tonic as 6 and 6/9), named
+  by degree. Hold a pad to hear it on the track's instrument, drag it into
+  the notes to write it there (snapped to the grid) or onto another pad, or
+  use *Insert at Playhead*. The **circle of fifths** next to the pads turns
+  to the chord heard last (majors outside, relative minors inside, the
+  leading-tone chord in the middle) and colours what follows it best:
+  green a step around the circle or its relative (IV, V, vi …), yellow two
+  steps, orange three; a dominant seventh prefers to resolve down a fifth.
+  The pads get the same coloured strip. Click a chord of the circle to hear
+  it, drag it onto a pad or into the notes.
   In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and
   click notes into the staff; click or drag notes to select and move them,
   pick a value to change their length, Delete removes, Up/Down transposes,

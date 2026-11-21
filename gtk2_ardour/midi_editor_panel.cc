@@ -406,17 +406,19 @@ MidiEditorPanel::score_key_press (GdkEventKey* ev)
 void
 MidiEditorPanel::insert_chord (int pad, Temporal::Beats start)
 {
+	insert_notes (chord_pads.pitches (pad), chord_pads.name (pad), start);
+}
+
+void
+MidiEditorPanel::insert_notes (std::vector<uint8_t> const& p, std::string const& name, Temporal::Beats start)
+{
 	MidiView* mv = _pianoroll->midi_view ();
-	if (!mv || !mv->midi_region ()) {
-		return;
-	}
-	std::vector<uint8_t> const p = chord_pads.pitches (pad);
-	if (p.empty ()) {
+	if (!mv || !mv->midi_region () || p.empty ()) {
 		return;
 	}
 	uint8_t const ch = (uint8_t) std::max (0, std::min (15, _pianoroll->visible_channel ()));
 	mv->clear_note_selection ();
-	mv->start_note_diff_command (string_compose (_("add chord %1"), chord_pads.name (pad)));
+	mv->start_note_diff_command (string_compose (_("add chord %1"), name));
 	for (uint8_t n : p) {
 		mv->note_diff_add_note (std::shared_ptr<MidiView::NoteType> (new MidiView::NoteType (ch, start, chord_pads.length (), n, 100)), true);
 	}
@@ -451,7 +453,12 @@ MidiEditorPanel::chord_dropped (Glib::RefPtr<Gdk::DragContext> const& ctx, int x
 		ctx->drag_finish (false, false, time);
 		return;
 	}
-	const int pad = atoi (data.get_data_as_string ().c_str ());
+	std::vector<uint8_t> notes;
+	std::string          name;
+	if (!chord_pads.drag_chord (data.get_data_as_string (), notes, name)) {
+		ctx->drag_finish (false, false, time);
+		return;
+	}
 
 	/* the same time a click there would add a note at (NoteCreateDrag) */
 	GdkEventButton ev;
@@ -469,6 +476,6 @@ MidiEditorPanel::chord_dropped (Glib::RefPtr<Gdk::DragContext> const& ctx, int x
 	} else {
 		start = r->absolute_time_to_source_beats (pos);
 	}
-	insert_chord (pad, start);
+	insert_notes (notes, name, start);
 	ctx->drag_finish (true, false, time);
 }

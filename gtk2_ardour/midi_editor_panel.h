@@ -88,6 +88,7 @@ private:
 	ChordPads                   chord_pads;
 	/** write a pad's chord at a position of the region's source (beats) */
 	void insert_chord (int pad, Temporal::Beats source_start);
+	void insert_notes (std::vector<uint8_t> const&, std::string const& name, Temporal::Beats source_start);
 	void insert_chord_at_playhead (int pad);
 	void chord_dropped (Glib::RefPtr<Gdk::DragContext> const&, int x, int y, Gtk::SelectionData const&, guint, guint);
 	ArdourWidgets::ArdourButton all_drums_button;
