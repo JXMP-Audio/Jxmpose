@@ -30,6 +30,7 @@
 
 #include "widgets/tooltips.h"
 
+#include "ardour_window.h"
 #include "chord_pads.h"
 
 #include "pbd/i18n.h"
@@ -865,6 +866,7 @@ ChordPads::ChordPads ()
 	, _chord_keys (manage (new ChordKeys ()))
 	, _fill_button (_("Fill Pads"))
 	, _edit_button (_("Edit Chord"))
+	, _editor_window (0)
 	, _no_bass_button (_("None"))
 	, _oct_down ("−")
 	, _oct_up ("+")
@@ -1046,18 +1048,16 @@ ChordPads::ChordPads ()
 		main->pack_start (*cv, false, false);
 	}
 
-	/* the chord editor under the pads, shown on demand */
+	/* the chord editor, shown on demand in a small window of its own */
 	_editor_box.pack_start (*right, false, false);
-	_editor_box.set_border_width (2);
+	_editor_box.set_border_width (8);
+	_editor_box.show_all ();
 
 	pack_start (*top, false, false);
 	pack_start (*main, true, true);
-	pack_start (_editor_box, false, false);
 	set_spacing (4);
 	set_border_width (4);
 	show_all ();
-	_editor_box.set_no_show_all ();
-	_editor_box.hide ();
 	if ((int) _pads.size () != n_pads) {
 		fill_from_key (); /* the first time: the chords of C major */
 	} else {
@@ -1068,6 +1068,10 @@ ChordPads::ChordPads ()
 ChordPads::~ChordPads ()
 {
 	silence ();
+	if (_editor_window) {
+		_editor_window->remove ();
+		delete _editor_window;
+	}
 }
 
 void
@@ -1366,11 +1370,32 @@ void
 ChordPads::show_editor (bool yn)
 {
 	_edit_button.set_active (yn);
-	if (yn) {
-		_editor_box.show ();
-	} else {
-		_editor_box.hide ();
+	if (!yn) {
+		if (_editor_window) {
+			_editor_window->hide ();
+		}
+		return;
 	}
+	if (!_editor_window) {
+		_editor_window = new ArdourWindow (_("Chord Editor"));
+		_editor_window->add (_editor_box);
+		_editor_window->set_resizable (false);
+		_editor_window->signal_hide ().connect ([this] () { _edit_button.set_active (false); });
+		/* closing the window only hides it (it is reused) */
+		_editor_window->signal_delete_event ().connect ([this] (GdkEventAny*) { _editor_window->hide (); return true; }, false);
+	}
+	if (Gtk::Window* top = dynamic_cast<Gtk::Window*> (get_toplevel ())) {
+		_editor_window->set_transient_for (*top);
+	}
+	if (!_editor_window->get_visible ()) {
+		/* open above the button (over the tracks), so the pads stay visible */
+		int x, y;
+		_edit_button.get_window ()->get_origin (x, y);
+		Gtk::Allocation const a   = _edit_button.get_allocation ();
+		Gtk::Requisition const r  = _editor_window->size_request ();
+		_editor_window->move (x + a.get_x (), std::max (0, y + a.get_y () - r.height - 40)); /* 40: title bar */
+	}
+	_editor_window->present ();
 }
 
 void

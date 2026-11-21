@@ -42,8 +42,10 @@ using std::vector;
 StreamLink&
 StreamLink::instance ()
 {
-	static StreamLink sl;
-	return sl;
+	/* never destroyed: a static instance would drop its signal connections after main() returned,
+	 * when Config and the AudioEngine are already gone (crash on quit) */
+	static StreamLink* sl = new StreamLink;
+	return *sl;
 }
 
 StreamLink::StreamLink ()

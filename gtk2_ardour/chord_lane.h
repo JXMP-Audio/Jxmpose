@@ -47,6 +47,8 @@ class ChordLane : public Gtk::DrawingArea
 {
 public:
 	ChordLane (ChordPads&);
+
+	static const int lane_h = 84; /* ruler + one row of chord blocks */
 	~ChordLane ();
 
 	void set_session (ARDOUR::Session* s) { _session = s; }
