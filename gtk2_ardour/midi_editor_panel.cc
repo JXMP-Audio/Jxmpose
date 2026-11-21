@@ -49,10 +49,12 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	, chord_lane (chord_pads)
 	, all_drums_button (_("All Drums"))
 	, drum_notation_button (_("Drum Notation"))
+	, input_button (_("Note Input"))
 	, dot_button (".")
 	, triplet_button ("3")
 	, quint_button ("5")
-	, _note_base (0)
+	, _note_base (1920)
+	, _input (false)
 	, _note_dot (false)
 	, _note_triplet (false)
 	, _note_quint (false)
@@ -66,7 +68,7 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	struct { ArdourWidgets::ArdourButton* b; EditorMode m; const char* tip; } modes[] = {
 		{ &key_button,   KeyEditor,   _("Notes on a piano keyboard grid") },
 		{ &drum_button,  DrumEditor,  _("Drum hits: one row per drum sound, notes as fixed-length hits") },
-		{ &score_button, ScoreEditor, _("Music notation of the region (view only for now; Ctrl+wheel to zoom)") },
+		{ &score_button, ScoreEditor, _("Music notation of the region, edited like MuseScore: N starts note input, A-G enter notes; Ctrl+wheel zooms") },
 		{ &chord_button, ChordEditor, _("Chord pads: build chords from root, type, tension and bass; hold a pad to hear it, drag it into the notes to write it") },
 	};
 	for (auto const& m : modes) {
@@ -99,14 +101,24 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	});
 	mode_bar.pack_end (drum_notation_button, false, false);
 
-	/* score input */
+	/* score input, keys as in MuseScore */
+	input_button.set_name ("tab button");
+	input_button.set_corner_radius (2);
+	ArdourWidgets::set_tooltip (input_button, _("Note input (key: N, Esc leaves it). A-G enter a note at the cursor (Shift: add to the chord), "
+	                                            "0 a rest, Alt+2..9 an interval above, T a tied note, Left/Right move the cursor. "
+	                                            "Click adds a note (to the chord there), Shift+click replaces, right click enters a rest.\n"
+	                                            "Outside note input: click selects (Ctrl toggles, Shift selects a range, drag lassoes), "
+	                                            "Left/Right select the next chord, Up/Down transpose (Ctrl: octave, Alt+Shift: diatonic), "
+	                                            "R repeats, T ties to the next note, Q/W halve/double, Ctrl+C/V copy/paste"));
+	input_button.signal_clicked.connect ([this] () { set_input (!_input); });
+	note_value_box.pack_start (input_button, false, false, 4);
+
 	struct { const char* label; int64_t ticks; const char* tip; } values[] = {
-		{ _("Select"), 0,    _("Select and drag notes; Delete removes, Up/Down transposes (Ctrl: octave) (key: 0)") },
-		{ "1/1",       7680, _("Whole notes: click into the staff to add, or set the length of the selected notes (key: 8)") },
-		{ "1/2",       3840, _("Half notes (key: 7)") },
-		{ "1/4",       1920, _("Quarter notes (key: 6)") },
-		{ "1/8",       960,  _("Eighth notes (key: 5)") },
-		{ "1/16",      480,  _("Sixteenth notes (key: 4)") },
+		{ "1/1",       7680, _("Whole notes: the value of entered notes, or the length of the selected notes (key: 7)") },
+		{ "1/2",       3840, _("Half notes (key: 6)") },
+		{ "1/4",       1920, _("Quarter notes (key: 5)") },
+		{ "1/8",       960,  _("Eighth notes (key: 4)") },
+		{ "1/16",      480,  _("Sixteenth notes (key: 3)") },
 	};
 	for (auto const& v : values) {
 		ArdourWidgets::ArdourButton* b = manage (new ArdourWidgets::ArdourButton (v.label));
@@ -125,12 +137,12 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	note_value_box.pack_start (dot_button, false, false, 4);
 	triplet_button.set_name ("tab button");
 	triplet_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (triplet_button, _("Triplets: quarter, eighth and sixteenth notes as triplets (key: ;)"));
+	ArdourWidgets::set_tooltip (triplet_button, _("Triplets: quarter, eighth and sixteenth notes as triplets (key: Ctrl+3)"));
 	triplet_button.signal_clicked.connect ([this] () { _note_triplet = !_note_triplet; if (_note_triplet) { _note_dot = _note_quint = false; } apply_note_value (true); });
 	note_value_box.pack_start (triplet_button, false, false);
 	quint_button.set_name ("tab button");
 	quint_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (quint_button, _("Quintuplets: five sixteenth notes in a beat"));
+	ArdourWidgets::set_tooltip (quint_button, _("Quintuplets: five sixteenth notes in a beat (key: Ctrl+5)"));
 	quint_button.signal_clicked.connect ([this] () { _note_quint = !_note_quint; if (_note_quint) { _note_dot = _note_triplet = false; } apply_note_value (true); });
 	note_value_box.pack_start (quint_button, false, false);
 	note_value_box.set_spacing (2);
@@ -221,7 +233,7 @@ MidiEditorPanel::set_editor_mode (EditorMode m)
 		score_view.set_drum_content (drums);
 		score_view.set_percussion (drums);
 		score_view.set_history (&_pianoroll->history ());
-		score_view.set_channel (_pianoroll->visible_channel ());
+		score_view.set_channel (std::max (0, _pianoroll->visible_channel ()));
 		drum_notation_button.show ();
 		note_value_box.show ();
 	} else {
@@ -324,7 +336,19 @@ void
 MidiEditorPanel::set_note_value (int64_t ticks)
 {
 	_note_base = ticks;
+	if (!_input && !score_view.has_selection ()) {
+		/* nothing to change the length of: start entering notes */
+		_input = true;
+	}
 	apply_note_value (true);
+}
+
+void
+MidiEditorPanel::set_input (bool yn)
+{
+	_input = yn;
+	apply_note_value (false);
+	score_view.grab_focus ();
 }
 
 void
@@ -338,7 +362,8 @@ MidiEditorPanel::apply_note_value (bool to_selection)
 	} else if (len && _note_triplet && (len == 1920 || len == 960 || len == 480)) {
 		len = len * 2 / 3;
 	}
-	score_view.set_insert_length (len);
+	score_view.set_insert_length (_input ? len : 0);
+	input_button.set_active (_input);
 	for (auto const& b : note_value_buttons) {
 		b.first->set_active (b.second == _note_base);
 	}
@@ -346,8 +371,8 @@ MidiEditorPanel::apply_note_value (bool to_selection)
 	triplet_button.set_active (_note_triplet);
 	quint_button.set_active (_note_quint);
 
-	/* Dorico-style: picking a value with notes selected changes their length */
-	if (to_selection && len > 0 && score_view.has_selection ()) {
+	/* MuseScore: outside note input a value changes the selected notes */
+	if (to_selection && !_input && score_view.has_selection ()) {
 		score_view.set_selection_length (len);
 	}
 }
@@ -375,33 +400,53 @@ MidiEditorPanel::handle_key (GdkEventKey* ev)
 			}
 		}
 	}
-	/* score editing keys first (Delete, arrows, Escape) */
 	if (_mode == ScoreEditor) {
-		if (score_view.handle_key (ev)) {
-			return true;
-		}
-		/* note values like in notation programs: 4 = 16th ... 8 = whole */
-		if (!(ev->state & (Gtkmm2ext::Keyboard::PrimaryModifier | Gtkmm2ext::Keyboard::SecondaryModifier))) {
+		guint const mods = ev->state & (Gtkmm2ext::Keyboard::PrimaryModifier | Gtkmm2ext::Keyboard::SecondaryModifier);
+		/* note input and note values, as in MuseScore: 3 = 16th ... 7 = whole */
+		if (!mods) {
 			switch (ev->keyval) {
-			case GDK_4: set_note_value (480);  return true;
-			case GDK_5: set_note_value (960);  return true;
-			case GDK_6: set_note_value (1920); return true;
-			case GDK_7: set_note_value (3840); return true;
-			case GDK_8: set_note_value (7680); return true;
-			case GDK_0: set_note_value (0);    return true;
+			case GDK_n:
+			case GDK_N:
+				set_input (!_input);
+				return true;
+			case GDK_Escape:
+				if (_input) {
+					set_input (false);
+					return true;
+				}
+				break;
+			case GDK_3: set_note_value (480);  return true;
+			case GDK_4: set_note_value (960);  return true;
+			case GDK_5: set_note_value (1920); return true;
+			case GDK_6: set_note_value (3840); return true;
+			case GDK_7: set_note_value (7680); return true;
 			case GDK_period:
+			case GDK_KP_Decimal:
 				_note_dot = !_note_dot;
 				if (_note_dot) { _note_triplet = _note_quint = false; }
-				apply_note_value (true);
-				return true;
-			case GDK_semicolon:
-				_note_triplet = !_note_triplet;
-				if (_note_triplet) { _note_dot = _note_quint = false; }
 				apply_note_value (true);
 				return true;
 			default:
 				break;
 			}
+		} else if (mods == Gtkmm2ext::Keyboard::PrimaryModifier) {
+			/* tuplets: Ctrl+3 triplet, Ctrl+5 quintuplet (of sixteenths) */
+			if (ev->keyval == GDK_3) {
+				_note_triplet = !_note_triplet;
+				if (_note_triplet) { _note_dot = _note_quint = false; }
+				apply_note_value (true);
+				return true;
+			}
+			if (ev->keyval == GDK_5) {
+				_note_quint = !_note_quint;
+				if (_note_quint) { _note_dot = _note_triplet = false; _note_base = 480; }
+				apply_note_value (true);
+				return true;
+			}
+		}
+		/* letters, rests, arrows, Delete, copy / paste */
+		if (score_view.handle_key (ev)) {
+			return true;
 		}
 		/* undo/redo the region edits here, not in the main editor */
 		if (ev->state & Gtkmm2ext::Keyboard::PrimaryModifier) {

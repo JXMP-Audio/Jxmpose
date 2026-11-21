@@ -98,18 +98,22 @@ private:
 	ArdourWidgets::ArdourButton all_drums_button;
 	ArdourWidgets::ArdourButton drum_notation_button;
 
-	/* score input: select, or the note value that a click adds */
+	/* score input: note input mode (N) and the value of entered notes */
 	Gtk::HBox note_value_box;
+	ArdourWidgets::ArdourButton input_button;
 	std::vector<std::pair<ArdourWidgets::ArdourButton*, int64_t>> note_value_buttons;
 	ArdourWidgets::ArdourButton dot_button;
 	ArdourWidgets::ArdourButton triplet_button;
 	ArdourWidgets::ArdourButton quint_button;
-	int64_t _note_base;    ///< picked value, 0: select
+	int64_t _note_base;    ///< picked value (ticks)
+	bool    _input;        ///< note input mode
 	bool    _note_dot;
 	bool    _note_triplet;
 	bool    _note_quint;
-	/** pick a note value; with notes selected it also sets their length */
+	/** pick a note value: outside note input it sets the length of the
+	 *  selected notes (MuseScore), with nothing selected it starts note input */
 	void set_note_value (int64_t ticks);
+	void set_input (bool);
 	void apply_note_value (bool to_selection);
 
 	bool score_focus_in (GdkEventFocus*);

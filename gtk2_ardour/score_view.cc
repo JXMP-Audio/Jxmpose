@@ -34,6 +34,9 @@
 
 #include "pbd/history_owner.h"
 
+#include "ytkmm/adjustment.h"
+#include "ytkmm/viewport.h"
+
 #include "gtkmm2ext/keyboard.h"
 
 #include "gui_thread.h"
@@ -373,10 +376,25 @@ ScoreView::ScoreView ()
 	, _dragging (false)
 	, _drag_dt (0)
 	, _drag_dp (0)
+	, _hover (false)
+	, _hover_tick (0)
+	, _hover_pitch (0)
+	, _cursor (-1)
+	, _cursor_staff (0)
+	, _chord_tick (-1)
+	, _chord_len (0)
+	, _chord_top (0)
+	, _last_pitch (-1)
+	, _lasso (false)
+	, _lasso_add (false)
+	, _lasso_x0 (0)
+	, _lasso_y0 (0)
+	, _lasso_x1 (0)
+	, _lasso_y1 (0)
 	, _fifths (0)
 	, _drum_content (false)
 {
-	add_events (Gdk::SCROLL_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::BUTTON1_MOTION_MASK | Gdk::KEY_PRESS_MASK);
+	add_events (Gdk::SCROLL_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK | Gdk::KEY_PRESS_MASK);
 	set_can_focus (true);
 }
 
@@ -388,6 +406,13 @@ void
 ScoreView::set_region (std::shared_ptr<MidiRegion> r)
 {
 	_connections.drop_connections ();
+	if (_region != r) {
+		_selection.clear ();
+		_anchor.reset ();
+		_cursor     = -1;
+		_chord_tick = -1;
+		_last_pitch = -1;
+	}
 	_region = r;
 
 	if (_region) {
@@ -483,12 +508,17 @@ ScoreView::rebuild ()
 
 		/* forget selected notes that are gone */
 		std::set<NotePtr> still;
+		bool              anchor_ok = false;
 		for (auto const& n : model->notes ()) {
 			if (_selection.count (n)) {
 				still.insert (n);
 			}
+			anchor_ok |= n == _anchor;
 		}
 		_selection.swap (still);
+		if (!anchor_ok) {
+			_anchor.reset ();
+		}
 
 		int64_t const bt = beat_ticks ();
 		auto staff_of = [&] (uint8_t pitch) {
@@ -2202,10 +2232,77 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 		}
 	}
 
+	draw_cursor (cr);
+	draw_hover (cr);
+
+	if (_lasso) {
+		cr->rectangle (std::min (_lasso_x0, _lasso_x1), std::min (_lasso_y0, _lasso_y1), std::fabs (_lasso_x1 - _lasso_x0), std::fabs (_lasso_y1 - _lasso_y0));
+		cr->set_source_rgba (0.15, 0.45, 0.95, 0.12);
+		cr->fill_preserve ();
+		cr->set_source_rgba (0.15, 0.45, 0.95, 0.7);
+		cr->set_line_width (1);
+		cr->stroke ();
+	}
+
 	(void) a;
 }
 
 /* ---- editing ---- */
+
+namespace {
+
+/** notes chosen by `which` that start inside [t, t + len) are removed,
+ * the ones sounding into it end at t (MuseScore's overwriting input);
+ * the model's read lock must be held. @return number of changes */
+template <typename TickOf, typename Which>
+int
+clear_span (MidiModel::NoteDiffCommand* cmd, MidiModel const& model, int64_t t, int64_t len, TickOf tick_of, Which which)
+{
+	int n = 0;
+	for (auto const& e : model.notes ()) {
+		if (!which (e)) {
+			continue;
+		}
+		int64_t const et = tick_of (e);
+		int64_t const ee = et + e->length ().to_ticks ();
+		if (et >= t && et < t + len) {
+			cmd->remove (e);
+			++n;
+		} else if (et < t && ee > t) {
+			cmd->change (e, MidiModel::NoteDiffCommand::Length, Beats::ticks (t - et));
+			++n;
+		}
+	}
+	return n;
+}
+
+/** the pitch of a letter (0 = C .. 6 = B) in a key, nearest to `ref` */
+int
+nearest_letter_pitch (int letter, int fifths, int ref)
+{
+	int best = -1;
+	for (int o = -1; o <= 9; ++o) {
+		int const p = (o + 1) * 12 + natural_pc[letter] + key_alter (letter, fifths);
+		if (p < 0 || p > 127) {
+			continue;
+		}
+		if (best < 0 || std::abs (p - ref) < std::abs (best - ref)) {
+			best = p;
+		}
+	}
+	return best;
+}
+
+/** the pitch of a diatonic step (octave * 7 + letter) in a key */
+int
+diatonic_pitch (int d, int fifths)
+{
+	int const octave = (int) floor (d / 7.);
+	int const letter = d - octave * 7;
+	return (octave + 1) * 12 + natural_pc[letter] + key_alter (letter, fifths);
+}
+
+} // namespace
 
 int64_t
 ScoreView::time_in_bar (Bar const& bar, double x) const
@@ -2300,16 +2397,16 @@ ScoreView::pitch_at (double x, double y, size_t& bar_index, uint8_t& pitch) cons
 	return true;
 }
 
-void
-ScoreView::add_note (int64_t tick, uint8_t pitch)
+ScoreView::NotePtr
+ScoreView::write_note (int64_t tick, int64_t len, uint8_t pitch, bool replace)
 {
 	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
-	if (!model || !_history) {
-		return;
+	if (!model || !_history || tick < _r_start || tick >= _r_end) {
+		return NotePtr ();
 	}
-	int64_t len = std::min (_insert_len, _r_end - tick);
+	len = std::min (len, _r_end - tick);
 	if (len <= 0) {
-		return;
+		return NotePtr ();
 	}
 	Beats const start = _region->absolute_time_to_source_beats (timepos_t (Beats::ticks (_origin + tick)));
 
@@ -2317,30 +2414,38 @@ ScoreView::add_note (int64_t tick, uint8_t pitch)
 
 	{
 		MidiModel::ReadLock lm (model->read_lock ());
-		for (auto const& e : model->notes ()) {
-			/* the same note is already there: select it instead of stacking a copy */
-			if (e->note () == pitch && e->time () == start) {
-				delete cmd;
-				_selection.clear ();
-				_selection.insert (e);
-				queue_draw ();
-				return;
-			}
-		}
-		/* notes on the same staff do not overlap the new one (that would
-		 * make a second voice): it ends where the next one starts, and a
-		 * note sounding into it ends there; same start makes a chord */
-		if (!_percussion) {
+		if (replace) {
+			/* overwrite: what was there on the staff goes (drums: that drum) */
+			int const st = staff_of (pitch);
+			clear_span (cmd, *model, tick, len, [this] (NotePtr const& e) { return note_tick (e); },
+			            [&] (NotePtr const& e) { return _percussion ? e->note () == pitch : staff_of (e->note ()) == st; });
+		} else {
 			for (auto const& e : model->notes ()) {
-				if ((e->note () >= 60) != (pitch >= 60)) {
-					continue;
+				/* the same note is already there: select it instead of stacking a copy */
+				if (e->note () == pitch && e->time () == start) {
+					delete cmd;
+					_selection.clear ();
+					_selection.insert (e);
+					_anchor = e;
+					queue_draw ();
+					return e;
 				}
-				int64_t const et = note_tick (e);
-				int64_t const ee = et + e->length ().to_ticks ();
-				if (et > tick && et < tick + len) {
-					len = et - tick;
-				} else if (et < tick && ee > tick) {
-					cmd->change (e, MidiModel::NoteDiffCommand::Length, Beats::ticks (tick - et));
+			}
+			/* notes on the same staff do not overlap the new one (that would
+			 * make a second voice): it ends where the next one starts, and a
+			 * note sounding into it ends there; same start makes a chord */
+			if (!_percussion) {
+				for (auto const& e : model->notes ()) {
+					if ((e->note () >= 60) != (pitch >= 60)) {
+						continue;
+					}
+					int64_t const et = note_tick (e);
+					int64_t const ee = et + e->length ().to_ticks ();
+					if (et > tick && et < tick + len) {
+						len = et - tick;
+					} else if (et < tick && ee > tick) {
+						cmd->change (e, MidiModel::NoteDiffCommand::Length, Beats::ticks (tick - et));
+					}
 				}
 			}
 		}
@@ -2352,8 +2457,66 @@ ScoreView::add_note (int64_t tick, uint8_t pitch)
 
 	_selection.clear ();
 	_selection.insert (n);
+	_anchor = n;
 	play (n);
 	rebuild ();
+	return n;
+}
+
+int
+ScoreView::staff_of (uint8_t pitch) const
+{
+	/* staff, or voice in drum notation (0: hands, 1: feet) */
+	return _percussion ? (is_foot (pitch) ? 1 : 0) : (pitch >= 60 ? 0 : 1);
+}
+
+std::vector<std::pair<int64_t, ScoreView::NotePtr>>
+ScoreView::region_notes () const
+{
+	std::vector<std::pair<int64_t, NotePtr>> v;
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model) {
+		return v;
+	}
+	{
+		MidiModel::ReadLock lm (model->read_lock ());
+		for (auto const& n : model->notes ()) {
+			int64_t const t = note_tick (n);
+			if (t >= _r_start && t < _r_end) {
+				v.push_back (std::make_pair (t, n));
+			}
+		}
+	}
+	std::sort (v.begin (), v.end (), [] (std::pair<int64_t, NotePtr> const& a, std::pair<int64_t, NotePtr> const& b) {
+		return a.first != b.first ? a.first < b.first : a.second->note () < b.second->note ();
+	});
+	return v;
+}
+
+int
+ScoreView::top_pitch_at (int64_t tick, int staff) const
+{
+	int top = -1;
+	for (auto const& tn : region_notes ()) {
+		if (tn.first == tick && staff_of (tn.second->note ()) == staff) {
+			top = std::max (top, (int) tn.second->note ());
+		}
+	}
+	return top;
+}
+
+void
+ScoreView::follow_selection_pitch ()
+{
+	if (!in_input () || _selection.empty ()) {
+		return;
+	}
+	int top = -1;
+	for (auto const& n : _selection) {
+		top = std::max (top, (int) n->note ());
+	}
+	_last_pitch = top;
+	_chord_top  = top;
 }
 
 void
@@ -2368,6 +2531,8 @@ ScoreView::delete_selection ()
 		cmd->remove (n);
 	}
 	_selection.clear ();
+	_anchor.reset ();
+	_chord_tick = -1;
 	model->apply_diff_command_as_commit (*_history, cmd);
 	rebuild ();
 }
@@ -2390,7 +2555,8 @@ ScoreView::transpose_selection (int semitones)
 		cmd->change (n, MidiModel::NoteDiffCommand::NoteNumber, (uint8_t) (n->note () + semitones));
 	}
 	model->apply_diff_command_as_commit (*_history, cmd);
-	play (*_selection.begin ());
+	follow_selection_pitch ();
+	play_selection ();
 	rebuild ();
 }
 
@@ -2399,24 +2565,61 @@ ScoreView::on_button_press_event (GdkEventButton* ev)
 {
 	grab_focus ();
 
+	if (ev->type != GDK_BUTTON_PRESS) {
+		/* the second press of a double click already did its work */
+		return true;
+	}
+
+	clear_hover ();
+
+	bool const toggle = ev->state & Gtkmm2ext::Keyboard::PrimaryModifier;
+	bool const shift  = ev->state & Gtkmm2ext::Keyboard::TertiaryModifier;
+
+	size_t  b;
+	uint8_t pitch;
+
+	/* note input: right click enters a rest */
+	if (ev->button == 3) {
+		if (in_input () && pitch_at (ev->x, ev->y, b, pitch)) {
+			int64_t const tick = b * _bar_len + snap_time (time_in_bar (_bars[b], ev->x));
+			enter_rest (tick, staff_of (pitch));
+			return true;
+		}
+		return false;
+	}
+
 	if (ev->button != 1) {
 		return false;
 	}
 
-	bool const add = ev->state & Gtkmm2ext::Keyboard::TertiaryModifier;
-
-	/* a note head: select it */
+	/* a note head: select it (Ctrl toggles, Shift selects the range from the last one) */
 	for (auto h = _hits.rbegin (); h != _hits.rend (); ++h) {
 		if (ev->x >= h->x0 && ev->x <= h->x1 && ev->y >= h->y0 && ev->y <= h->y1) {
-			if (add) {
+			if (shift && _anchor && !in_input ()) {
+				select_range (_anchor, h->note);
+			} else if (toggle) {
 				if (_selection.count (h->note)) {
 					_selection.erase (h->note);
 				} else {
 					_selection.insert (h->note);
 				}
-			} else if (!_selection.count (h->note)) {
-				_selection.clear ();
-				_selection.insert (h->note);
+				_anchor = h->note;
+			} else {
+				if (!_selection.count (h->note)) {
+					_selection.clear ();
+					_selection.insert (h->note);
+				}
+				_anchor = h->note;
+			}
+			if (in_input ()) {
+				/* input goes on after this chord, Shift+letter adds to it */
+				int64_t const t = note_tick (h->note);
+				int const     st = staff_of (h->note->note ());
+				_chord_tick = t;
+				_chord_len  = h->note->length ().to_ticks ();
+				_chord_top  = top_pitch_at (t, st);
+				_last_pitch = h->note->note ();
+				set_cursor (t + _chord_len, st);
 			}
 			if (_selection.count (h->note)) {
 				/* may become a drag */
@@ -2433,28 +2636,40 @@ ScoreView::on_button_press_event (GdkEventButton* ev)
 		}
 	}
 
-	/* empty place: add a note when a note value is picked */
-	size_t  b;
-	uint8_t pitch;
-	if (_insert_len > 0 && pitch_at (ev->x, ev->y, b, pitch)) {
-		int64_t const tick = b * _bar_len + snap_time (time_in_bar (_bars[b], ev->x));
-		if (tick >= _r_start && tick < _r_end) {
-			add_note (tick, pitch);
-			return true;
+	/* note input: a click adds to the chord there, Shift+click replaces it */
+	if (in_input ()) {
+		if (pitch_at (ev->x, ev->y, b, pitch)) {
+			int64_t const tick = b * _bar_len + snap_time (time_in_bar (_bars[b], ev->x));
+			if (tick >= _r_start && tick < _r_end) {
+				int64_t const len = std::min (_insert_len, _r_end - tick);
+				NotePtr const n   = write_note (tick, len, pitch, shift);
+				if (n) {
+					int const st = staff_of (pitch);
+					_chord_tick = tick;
+					_chord_len  = n->length ().to_ticks ();
+					_chord_top  = top_pitch_at (tick, st);
+					_last_pitch = pitch;
+					set_cursor (tick + _chord_len, st);
+				}
+			}
 		}
+		return true;
 	}
 
-	if (!add && !_selection.empty ()) {
-		_selection.clear ();
-		queue_draw ();
-	}
+	/* empty place: rubber band selection (Ctrl or Shift adds) */
+	_lasso     = true;
+	_lasso_add = toggle || shift;
+	_lasso_x0  = _lasso_x1 = ev->x;
+	_lasso_y0  = _lasso_y1 = ev->y;
 	return true;
 }
 
 bool
 ScoreView::handle_key (GdkEventKey* ev)
 {
-	bool const octave = ev->state & Gtkmm2ext::Keyboard::PrimaryModifier;
+	bool const ctrl  = ev->state & Gtkmm2ext::Keyboard::PrimaryModifier;
+	bool const alt   = ev->state & Gtkmm2ext::Keyboard::SecondaryModifier;
+	bool const shift = ev->state & Gtkmm2ext::Keyboard::TertiaryModifier;
 
 	switch (ev->keyval) {
 	case GDK_Delete:
@@ -2462,14 +2677,117 @@ ScoreView::handle_key (GdkEventKey* ev)
 		delete_selection ();
 		return true;
 	case GDK_Up:
-		transpose_selection (octave ? 12 : 1);
+	case GDK_Down: {
+		int const dir = ev->keyval == GDK_Up ? 1 : -1;
+		if (alt && shift) {
+			diatonic_transpose (dir);
+		} else if (alt) {
+			step_in_chord (dir);
+		} else {
+			transpose_selection (dir * (ctrl ? 12 : 1));
+		}
 		return !_selection.empty ();
-	case GDK_Down:
-		transpose_selection (octave ? -12 : -1);
-		return !_selection.empty ();
+	}
+	case GDK_Left:
+	case GDK_Right: {
+		int const dir = ev->keyval == GDK_Right ? 1 : -1;
+		if (in_input ()) {
+			int64_t t = std::max<int64_t> (_cursor, _r_start);
+			if (ctrl) {
+				int64_t const bs = (t / _bar_len) * _bar_len;
+				t = dir > 0 ? bs + _bar_len : (t > bs ? bs : bs - _bar_len);
+			} else {
+				t += dir * snap_step ();
+			}
+			_chord_tick = -1;
+			set_cursor (t, _cursor_staff);
+		} else if (ctrl) {
+			step_bar (dir);
+		} else {
+			step_chord (dir, shift);
+		}
+		return true;
+	}
 	case GDK_Escape:
 		_selection.clear ();
+		_anchor.reset ();
 		queue_draw ();
+		return true;
+	case GDK_plus:
+	case GDK_KP_Add:
+		set_accidental (1);
+		return true;
+	case GDK_minus:
+	case GDK_KP_Subtract:
+		set_accidental (-1);
+		return true;
+	case GDK_equal:
+		set_accidental (0);
+		return true;
+	default:
+		break;
+	}
+
+	guint const key = gdk_keyval_to_lower (ev->keyval);
+
+	if (ctrl) {
+		if (alt) {
+			return false;
+		}
+		switch (key) {
+		case GDK_a:
+			select_all ();
+			return true;
+		case GDK_c:
+			copy_selection ();
+			return true;
+		case GDK_x:
+			copy_selection ();
+			delete_selection ();
+			return true;
+		case GDK_v:
+			paste ();
+			return true;
+		default:
+			return false;
+		}
+	}
+
+	if (alt) {
+		/* intervals above the note: Alt+3 a third, Alt+8 an octave */
+		if (ev->keyval >= GDK_2 && ev->keyval <= GDK_9) {
+			enter_interval (ev->keyval - GDK_1);
+			return true;
+		}
+		return false;
+	}
+
+	switch (key) {
+	case GDK_c: enter_letter (0, shift); return true;
+	case GDK_d: enter_letter (1, shift); return true;
+	case GDK_e: enter_letter (2, shift); return true;
+	case GDK_f: enter_letter (3, shift); return true;
+	case GDK_g: enter_letter (4, shift); return true;
+	case GDK_a: enter_letter (5, shift); return true;
+	case GDK_b: enter_letter (6, shift); return true;
+	case GDK_0:
+		if (in_input ()) {
+			enter_rest (_cursor, _cursor_staff);
+		} else {
+			delete_selection ();
+		}
+		return true;
+	case GDK_t:
+		add_tie ();
+		return true;
+	case GDK_r:
+		repeat_selection ();
+		return true;
+	case GDK_q:
+		scale_selection_length (false);
+		return true;
+	case GDK_w:
+		scale_selection_length (true);
 		return true;
 	default:
 		break;
@@ -2562,7 +2880,14 @@ ScoreView::play (NotePtr const& n)
 bool
 ScoreView::on_motion_notify_event (GdkEventMotion* ev)
 {
+	if (_lasso) {
+		_lasso_x1 = ev->x;
+		_lasso_y1 = ev->y;
+		queue_draw ();
+		return true;
+	}
 	if (!_drag_note) {
+		update_hover (ev->x, ev->y);
 		return false;
 	}
 	if (!_dragging && std::fabs (ev->x - _drag_x0) < 4 && std::fabs (ev->y - _drag_y0) < 4) {
@@ -2591,6 +2916,26 @@ ScoreView::on_motion_notify_event (GdkEventMotion* ev)
 bool
 ScoreView::on_button_release_event (GdkEventButton* ev)
 {
+	if (ev->button == 1 && _lasso) {
+		_lasso = false;
+		bool const moved = std::fabs (_lasso_x1 - _lasso_x0) > 3 || std::fabs (_lasso_y1 - _lasso_y0) > 3;
+		if (!_lasso_add) {
+			_selection.clear ();
+			_anchor.reset ();
+		}
+		if (moved) {
+			double const x0 = std::min (_lasso_x0, _lasso_x1), x1 = std::max (_lasso_x0, _lasso_x1);
+			double const y0 = std::min (_lasso_y0, _lasso_y1), y1 = std::max (_lasso_y0, _lasso_y1);
+			for (auto const& h : _hits) {
+				if (h.x1 >= x0 && h.x0 <= x1 && h.y1 >= y0 && h.y0 <= y1) {
+					_selection.insert (h.note);
+					_anchor = h.note;
+				}
+			}
+		}
+		queue_draw ();
+		return true;
+	}
 	if (ev->button != 1 || !_drag_note) {
 		return false;
 	}
@@ -2650,4 +2995,891 @@ ScoreView::set_selection_length (int64_t len)
 	}
 	model->apply_diff_command_as_commit (*_history, cmd);
 	rebuild ();
+}
+
+void
+ScoreView::set_insert_length (int64_t len)
+{
+	if (_insert_len == len) {
+		return;
+	}
+	bool const starts = _insert_len <= 0 && len > 0;
+	_insert_len = len;
+	if (starts) {
+		reset_cursor ();
+	}
+	if (len <= 0) {
+		clear_hover ();
+		_chord_tick = -1;
+	}
+	queue_draw ();
+}
+
+void
+ScoreView::clear_hover ()
+{
+	if (_hover) {
+		_hover = false;
+		queue_draw ();
+	}
+}
+
+bool
+ScoreView::on_leave_notify_event (GdkEventCrossing*)
+{
+	clear_hover ();
+	return false;
+}
+
+void
+ScoreView::update_hover (double x, double y)
+{
+	bool    on      = false;
+	int64_t tick    = 0;
+	uint8_t pitch   = 0;
+	size_t  b;
+
+	if (_insert_len > 0 && _region && pitch_at (x, y, b, pitch)) {
+		tick = b * _bar_len + snap_time (time_in_bar (_bars[b], x));
+		on   = tick >= _r_start && tick < _r_end;
+		/* over a note head a click selects it: no preview */
+		for (auto const& h : _hits) {
+			if (x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1) {
+				on = false;
+				break;
+			}
+		}
+	}
+
+	if (on != _hover || (on && (tick != _hover_tick || pitch != _hover_pitch))) {
+		_hover       = on;
+		_hover_tick  = tick;
+		_hover_pitch = pitch;
+		queue_draw ();
+	}
+}
+
+void
+ScoreView::draw_hover (Cairo::RefPtr<Cairo::Context> cr)
+{
+	if (!_hover || _dragging || _insert_len <= 0) {
+		return;
+	}
+	double x, y;
+	if (!position_of (_hover_tick, _hover_pitch, x, y)) {
+		return;
+	}
+	size_t const  b   = _hover_tick / _bar_len;
+	Bar const&    bar (_bars[b]);
+	System const& sys (_systems[bar.system]);
+
+	/* the written value of the insert length: plain or dotted, tuplets
+	 * as the next longer plain value */
+	static const int64_t values[] = { whole, half, quarter, eighth, grid };
+	int64_t const len    = std::min (_insert_len, _r_end - _hover_tick);
+	int64_t       base   = grid;
+	bool          dotted = false;
+	for (auto v : values) {
+		if (len == v || len == v * 3 / 2) {
+			base   = v;
+			dotted = len != v;
+			break;
+		}
+		if (v >= len) {
+			base = v;
+		}
+	}
+
+	double const sp     = _sp;
+	double const line_w = std::max (1., sp * 0.13);
+	double const stem_w = std::max (1., sp * 0.12);
+	double const headw  = glyph_width (cr, NoteheadBlack);
+
+	int d, alt = 0, st = 0;
+	uint32_t head = base >= whole ? NoteheadWhole : (base >= half ? NoteheadHalf : NoteheadBlack);
+	if (_percussion) {
+		uint32_t h;
+		drum_position (_hover_pitch, d, h);
+		if (h != NoteheadBlack) {
+			head = h;
+		}
+	} else {
+		spell (_hover_pitch, d, alt, fifths_at (b));
+		st = _hover_pitch >= 60 ? 0 : 1;
+	}
+	int const    ref    = _percussion ? bottom_line (0) : bottom_line (st);
+	double const bottom = staff_y (sys, st) + 4 * sp;
+	auto y_of = [&] (int dd) { return bottom - (dd - ref) * sp / 2.; };
+
+	cr->save ();
+	cr->set_source_rgba (0.15, 0.45, 0.95, 0.6);
+
+	/* ledger lines */
+	cr->set_line_width (line_w);
+	for (int dd = ref - 2; dd >= d; dd -= 2) {
+		cr->move_to (x - sp * 0.4, y_of (dd));
+		cr->line_to (x + headw + sp * 0.4, y_of (dd));
+	}
+	for (int dd = ref + 10; dd <= d; dd += 2) {
+		cr->move_to (x - sp * 0.4, y_of (dd));
+		cr->line_to (x + headw + sp * 0.4, y_of (dd));
+	}
+	cr->stroke ();
+
+	/* accidental, when out of the key */
+	if (!_percussion && alt != key_alter (((d % 7) + 7) % 7, fifths_at (b))) {
+		uint32_t const g = alt > 0 ? AccSharp : (alt < 0 ? AccFlat : AccNatural);
+		draw_glyph (cr, g, x - sp * 0.3 - glyph_width (cr, g), y);
+	}
+
+	draw_glyph (cr, head, x, y);
+
+	if (dotted) {
+		bool const on_line = ((d - ref) % 2) == 0;
+		draw_glyph (cr, AugDot, x + headw + sp * 0.35, y - (on_line ? sp / 2 : 0));
+	}
+
+	/* stem and flag */
+	if (base < whole) {
+		double const middle = bottom - 2 * sp;
+		/* drums: feet (kick, pedal hi-hat) stems down */
+		bool const   up     = _percussion ? !(_hover_pitch == 35 || _hover_pitch == 36 || _hover_pitch == 44) : d < ref + 4;
+		double const sx     = up ? x + headw - stem_w / 2 : x + stem_w / 2;
+		double const y1     = up ? std::min (y - 3.5 * sp, middle) : std::max (y + 3.5 * sp, middle);
+		cr->set_line_width (stem_w);
+		cr->move_to (sx, y);
+		cr->line_to (sx, y1);
+		cr->stroke ();
+		if (base <= eighth) {
+			uint32_t const flag = base == eighth ? (up ? Flag8thUp : Flag8thDown) : (up ? Flag16thUp : Flag16thDown);
+			draw_glyph (cr, flag, sx - stem_w / 2, y1);
+		}
+	}
+
+	cr->restore ();
+}
+
+/* ---- note input cursor ---- */
+
+void
+ScoreView::reset_cursor ()
+{
+	/* MuseScore: input starts at the selected note (the next entry replaces it) */
+	NotePtr first;
+	int64_t ft = 0;
+	for (auto const& n : _selection) {
+		int64_t const t = note_tick (n);
+		if (!first || t < ft || (t == ft && n->note () > first->note ())) {
+			first = n;
+			ft    = t;
+		}
+	}
+	_chord_tick = -1;
+	if (first) {
+		_last_pitch = first->note ();
+		set_cursor (ft, staff_of (first->note ()));
+		return;
+	}
+	if (_cursor < _r_start || _cursor > _r_end) {
+		set_cursor (_r_start, 0);
+	} else {
+		ensure_visible (_cursor);
+		queue_draw ();
+	}
+}
+
+void
+ScoreView::set_cursor (int64_t tick, int staff)
+{
+	_cursor       = std::max (_r_start, std::min (_r_end, tick));
+	_cursor_staff = staff;
+	ensure_visible (std::min (_cursor, std::max (_r_start, _r_end - 1)));
+	queue_draw ();
+}
+
+void
+ScoreView::draw_cursor (Cairo::RefPtr<Cairo::Context> cr)
+{
+	if (!in_input () || _cursor < 0 || _bars.empty () || _r_end <= _r_start) {
+		return;
+	}
+	int const st = _percussion ? 0 : _cursor_staff;
+	double    x, y;
+	if (_cursor < _r_end) {
+		if (!position_of (_cursor, st == 0 ? 71 : 50, x, y)) {
+			return;
+		}
+	} else {
+		/* past the last note: at the end of the region */
+		size_t const b = std::min<size_t> (_bars.size () - 1, (_r_end - 1) / _bar_len);
+		Bar const&   bar (_bars[b]);
+		x = bar.x + (bar.width - _sp * 1.6) * _systems[bar.system].stretch;
+	}
+	size_t const  b   = std::min<size_t> (_bars.size () - 1, std::max<int64_t> (0, std::min (_cursor, _r_end - 1)) / _bar_len);
+	System const& sys (_systems[_bars[b].system]);
+	double const  top   = staff_y (sys, st);
+	double const  headw = glyph_width (cr, NoteheadBlack);
+
+	cr->save ();
+	cr->rectangle (x - _sp * 0.35, top - _sp, headw + _sp * 0.7, 6 * _sp);
+	cr->set_source_rgba (0.15, 0.45, 0.95, 0.22);
+	cr->fill_preserve ();
+	cr->set_source_rgba (0.15, 0.45, 0.95, 0.8);
+	cr->set_line_width (std::max (1., _sp * 0.12));
+	cr->stroke ();
+	cr->restore ();
+}
+
+void
+ScoreView::ensure_visible (int64_t tick)
+{
+	if (_bars.empty () || _systems.empty () || tick < 0) {
+		return;
+	}
+	Gtk::Viewport* vp = dynamic_cast<Gtk::Viewport*> (get_parent ());
+	if (!vp) {
+		return;
+	}
+	size_t const  b = std::min<size_t> (_bars.size () - 1, tick / _bar_len);
+	System const& sys (_systems[_bars[b].system]);
+	Gtk::Adjustment* adj = vp->get_vadjustment ();
+	double const y0   = sys.y;
+	double const y1   = sys.y + system_height ();
+	double const page = adj->get_page_size ();
+	if (y0 < adj->get_value ()) {
+		adj->set_value (y0);
+	} else if (y1 > adj->get_value () + page) {
+		adj->set_value (std::max (0., std::min (y1 - page, adj->get_upper () - page)));
+	}
+}
+
+/* ---- entry ---- */
+
+void
+ScoreView::enter_letter (int letter, bool add_to_chord)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (_percussion || !model || !_history) {
+		return;
+	}
+
+	if (!in_input ()) {
+		/* MuseScore: a letter gives the selected notes that pitch name, in the nearest octave */
+		if (_selection.empty ()) {
+			return;
+		}
+		MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("change pitch"));
+		for (auto const& n : _selection) {
+			int const f = fifths_at (std::max<int64_t> (0, note_tick (n)) / _bar_len);
+			int const p = nearest_letter_pitch (letter, f, n->note ());
+			if (p >= 0) {
+				cmd->change (n, MidiModel::NoteDiffCommand::NoteNumber, (uint8_t) p);
+			}
+		}
+		model->apply_diff_command_as_commit (*_history, cmd);
+		play_selection ();
+		rebuild ();
+		return;
+	}
+
+	if (add_to_chord && _chord_tick >= 0) {
+		/* Shift+letter: the next such note above the chord */
+		int const f = fifths_at (_chord_tick / _bar_len);
+		int       p = -1;
+		for (int o = -1; o <= 9 && p < 0; ++o) {
+			int const q = (o + 1) * 12 + natural_pc[letter] + key_alter (letter, f);
+			if (q > _chord_top && q <= 127) {
+				p = q;
+			}
+		}
+		if (p < 0) {
+			return;
+		}
+		if (write_note (_chord_tick, _chord_len, p, false)) {
+			_chord_top  = p;
+			_last_pitch = p;
+		}
+		return;
+	}
+
+	int64_t const tick = std::max (_cursor, _r_start);
+	if (tick >= _r_end) {
+		return;
+	}
+	int const ref = _last_pitch >= 0 ? _last_pitch : (_cursor_staff == 0 ? 71 : 50);
+	int const p   = nearest_letter_pitch (letter, fifths_at (tick / _bar_len), ref);
+	if (p < 0) {
+		return;
+	}
+	int64_t const len = std::min (_insert_len, _r_end - tick);
+	if (write_note (tick, len, p, true)) {
+		_chord_tick = tick;
+		_chord_len  = len;
+		_chord_top  = p;
+		_last_pitch = p;
+		set_cursor (tick + len, staff_of (p));
+	}
+}
+
+void
+ScoreView::enter_rest (int64_t tick, int staff)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history || !in_input ()) {
+		return;
+	}
+	tick = std::max (tick, _r_start);
+	if (tick >= _r_end) {
+		return;
+	}
+	int64_t const len = std::min (_insert_len, _r_end - tick);
+
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("enter rest"));
+	int changes;
+	{
+		MidiModel::ReadLock lm (model->read_lock ());
+		changes = clear_span (cmd, *model, tick, len, [this] (NotePtr const& e) { return note_tick (e); },
+		                      [&] (NotePtr const& e) { return staff_of (e->note ()) == staff; });
+	}
+	if (changes) {
+		model->apply_diff_command_as_commit (*_history, cmd);
+	} else {
+		delete cmd;
+	}
+	_selection.clear ();
+	_chord_tick = -1;
+	set_cursor (tick + len, staff);
+	rebuild ();
+}
+
+void
+ScoreView::enter_interval (int steps)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (_percussion || !model || !_history || _selection.empty ()) {
+		return;
+	}
+	NotePtr top;
+	for (auto const& n : _selection) {
+		if (!top || n->note () > top->note ()) {
+			top = n;
+		}
+	}
+	int const f = fifths_at (std::max<int64_t> (0, note_tick (top)) / _bar_len);
+	int       d, alt;
+	spell (top->note (), d, alt, f);
+	int const p = diatonic_pitch (d + steps, f);
+	if (p < 0 || p > 127) {
+		return;
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("add interval"));
+	NotePtr n (new Evoral::Note<Beats> (top->channel (), top->time (), top->length (), p, top->velocity ()));
+	cmd->add (n);
+	model->apply_diff_command_as_commit (*_history, cmd);
+	_selection.clear ();
+	_selection.insert (n);
+	_anchor = n;
+	follow_selection_pitch ();
+	play (n);
+	rebuild ();
+}
+
+void
+ScoreView::set_accidental (int alter)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (_percussion || !model || !_history || _selection.empty ()) {
+		return;
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("accidental"));
+	for (auto const& n : _selection) {
+		int d, a;
+		spell (n->note (), d, a, fifths_at (std::max<int64_t> (0, note_tick (n)) / _bar_len));
+		int const p = diatonic_pitch (d, 0) + alter;
+		if (p >= 0 && p <= 127 && p != n->note ()) {
+			cmd->change (n, MidiModel::NoteDiffCommand::NoteNumber, (uint8_t) p);
+		}
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	follow_selection_pitch ();
+	play_selection ();
+	rebuild ();
+}
+
+void
+ScoreView::diatonic_transpose (int steps)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (_percussion || !model || !_history || _selection.empty ()) {
+		return;
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("transpose"));
+	for (auto const& n : _selection) {
+		int const f = fifths_at (std::max<int64_t> (0, note_tick (n)) / _bar_len);
+		int       d, a;
+		spell (n->note (), d, a, f);
+		int const p = diatonic_pitch (d + steps, f);
+		if (p < 0 || p > 127) {
+			delete cmd;
+			return;
+		}
+		cmd->change (n, MidiModel::NoteDiffCommand::NoteNumber, (uint8_t) p);
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	follow_selection_pitch ();
+	play_selection ();
+	rebuild ();
+}
+
+void
+ScoreView::add_tie ()
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history || _selection.empty ()) {
+		return;
+	}
+	auto tick_of = [this] (NotePtr const& e) { return note_tick (e); };
+
+	if (in_input ()) {
+		/* "add tied note": the last entered chord sounds one more note value */
+		int64_t end = 0;
+		for (auto const& n : _selection) {
+			end = std::max (end, note_tick (n) + n->length ().to_ticks ());
+		}
+		if (end >= _r_end) {
+			return;
+		}
+		int64_t const len = std::min (_insert_len, _r_end - end);
+		std::set<int> staves;
+		MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("tie"));
+		for (auto const& n : _selection) {
+			if (note_tick (n) + n->length ().to_ticks () == end) {
+				cmd->change (n, MidiModel::NoteDiffCommand::Length, n->length () + Beats::ticks (len));
+				staves.insert (staff_of (n->note ()));
+			}
+		}
+		{
+			MidiModel::ReadLock lm (model->read_lock ());
+			clear_span (cmd, *model, end, len, tick_of, [&] (NotePtr const& e) {
+				return !_selection.count (e) && staves.count (staff_of (e->note ()));
+			});
+		}
+		model->apply_diff_command_as_commit (*_history, cmd);
+		_chord_tick = -1;
+		set_cursor (end + len, _cursor_staff);
+		rebuild ();
+		return;
+	}
+
+	/* tie each selected note to the next one of the same pitch: in MIDI one longer note */
+	std::vector<std::pair<int64_t, NotePtr>> const v = region_notes ();
+	std::vector<std::pair<int64_t, NotePtr>>       sel;
+	for (auto const& tn : v) {
+		if (_selection.count (tn.second)) {
+			sel.push_back (tn);
+		}
+	}
+	std::set<NotePtr> removed;
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("tie"));
+	int changes = 0;
+	for (auto const& s : sel) {
+		if (removed.count (s.second)) {
+			continue;
+		}
+		int64_t end   = s.first + s.second->length ().to_ticks ();
+		bool    first = true;
+		for (;;) {
+			NotePtr next;
+			int64_t nt = 0;
+			for (auto const& tn : v) {
+				if (tn.second == s.second || removed.count (tn.second) || tn.second->note () != s.second->note ()) {
+					continue;
+				}
+				/* follows the note (a short gap is legato in MIDI) */
+				if (tn.first > s.first && tn.first <= end + grid) {
+					next = tn.second;
+					nt   = tn.first;
+					break;
+				}
+			}
+			/* a chain of selected notes ties together */
+			if (!next || (!first && !_selection.count (next))) {
+				break;
+			}
+			removed.insert (next);
+			cmd->remove (next);
+			end   = std::max (end, nt + next->length ().to_ticks ());
+			first = false;
+		}
+		if (!first) {
+			cmd->change (s.second, MidiModel::NoteDiffCommand::Length, Beats::ticks (end - s.first));
+			++changes;
+		}
+	}
+	if (!changes) {
+		delete cmd;
+		return;
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	rebuild ();
+}
+
+void
+ScoreView::scale_selection_length (bool longer)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history || _selection.empty ()) {
+		return;
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (longer ? _("double length") : _("halve length"));
+	for (auto const& n : _selection) {
+		int64_t const l  = n->length ().to_ticks ();
+		int64_t const nl = longer ? std::min (l * 2, std::max<int64_t> (l, _r_end - note_tick (n))) : std::max (grid / 4, l / 2);
+		if (nl != l) {
+			cmd->change (n, MidiModel::NoteDiffCommand::Length, Beats::ticks (nl));
+		}
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	rebuild ();
+}
+
+/* ---- copy, paste, repeat ---- */
+
+void
+ScoreView::copy_selection ()
+{
+	if (_selection.empty ()) {
+		return;
+	}
+	int64_t t0 = INT64_MAX;
+	for (auto const& n : _selection) {
+		t0 = std::min (t0, note_tick (n));
+	}
+	_clipboard.clear ();
+	for (auto const& n : _selection) {
+		Clip c;
+		c.dt       = note_tick (n) - t0;
+		c.len      = n->length ().to_ticks ();
+		c.pitch    = n->note ();
+		c.velocity = n->velocity ();
+		_clipboard.push_back (c);
+	}
+}
+
+namespace {
+
+/** write `clip` at `dest`, overwriting the staves it uses; @return the new notes */
+template <typename TickOf, typename StaffOf, typename ToSource>
+std::set<std::shared_ptr<Evoral::Note<Beats>>>
+write_clip (MidiModel::NoteDiffCommand* cmd, MidiModel const& model, int64_t dest, int64_t span, int64_t r_end, uint8_t channel,
+            std::vector<std::pair<std::pair<int64_t, int64_t>, std::pair<uint8_t, uint8_t>>> const& clip,
+            std::set<std::shared_ptr<Evoral::Note<Beats>>> const& keep, TickOf tick_of, StaffOf staff_of, ToSource to_source)
+{
+	std::set<int> staves;
+	for (auto const& c : clip) {
+		staves.insert (staff_of (c.second.first));
+	}
+	clear_span (cmd, model, dest, std::min (span, r_end - dest), tick_of, [&] (std::shared_ptr<Evoral::Note<Beats>> const& e) {
+		return !keep.count (e) && staves.count (staff_of (e->note ()));
+	});
+	std::set<std::shared_ptr<Evoral::Note<Beats>>> added;
+	for (auto const& c : clip) {
+		int64_t const t = dest + c.first.first;
+		if (t >= r_end) {
+			continue;
+		}
+		int64_t const len = std::min (c.first.second, r_end - t);
+		std::shared_ptr<Evoral::Note<Beats>> n (new Evoral::Note<Beats> (channel, to_source (t), Beats::ticks (len), c.second.first, c.second.second));
+		cmd->add (n);
+		added.insert (n);
+	}
+	return added;
+}
+
+} // namespace
+
+void
+ScoreView::paste ()
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history || _clipboard.empty ()) {
+		return;
+	}
+	/* at the input cursor, or the first selected note (MuseScore pastes at the selection) */
+	int64_t dest = -1;
+	if (in_input ()) {
+		dest = std::max (_cursor, _r_start);
+	} else {
+		for (auto const& n : _selection) {
+			int64_t const t = note_tick (n);
+			dest = dest < 0 ? t : std::min (dest, t);
+		}
+	}
+	if (dest < _r_start || dest >= _r_end) {
+		return;
+	}
+	std::vector<std::pair<std::pair<int64_t, int64_t>, std::pair<uint8_t, uint8_t>>> clip;
+	int64_t span = 0;
+	for (auto const& c : _clipboard) {
+		clip.push_back (std::make_pair (std::make_pair (c.dt, c.len), std::make_pair (c.pitch, c.velocity)));
+		span = std::max (span, c.dt + c.len);
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("paste"));
+	std::set<NotePtr> added;
+	{
+		MidiModel::ReadLock lm (model->read_lock ());
+		added = write_clip (cmd, *model, dest, span, _r_end, _channel, clip, std::set<NotePtr> (),
+		                    [this] (NotePtr const& e) { return note_tick (e); },
+		                    [this] (uint8_t p) { return staff_of (p); },
+		                    [this] (int64_t t) { return _region->absolute_time_to_source_beats (timepos_t (Beats::ticks (_origin + t))); });
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	_selection = added;
+	_anchor.reset ();
+	if (in_input ()) {
+		_chord_tick = -1;
+		set_cursor (dest + span, _cursor_staff);
+	}
+	ensure_visible (dest);
+	rebuild ();
+}
+
+void
+ScoreView::repeat_selection ()
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history || _selection.empty ()) {
+		return;
+	}
+	int64_t t0 = INT64_MAX, t1 = 0;
+	for (auto const& n : _selection) {
+		t0 = std::min (t0, note_tick (n));
+		t1 = std::max (t1, note_tick (n) + n->length ().to_ticks ());
+	}
+	/* played (shortened) notes repeat on the 16th grid, written values as they are */
+	int64_t span = t1 - t0;
+	if (span % 32) {
+		span = ((span + grid - 1) / grid) * grid;
+	}
+	int64_t const dest = t0 + span;
+	if (dest >= _r_end) {
+		return;
+	}
+	std::vector<std::pair<std::pair<int64_t, int64_t>, std::pair<uint8_t, uint8_t>>> clip;
+	for (auto const& n : _selection) {
+		clip.push_back (std::make_pair (std::make_pair (note_tick (n) - t0, n->length ().to_ticks ()), std::make_pair (n->note (), n->velocity ())));
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("repeat"));
+	std::set<NotePtr> added;
+	{
+		MidiModel::ReadLock lm (model->read_lock ());
+		added = write_clip (cmd, *model, dest, span, _r_end, _channel, clip, _selection,
+		                    [this] (NotePtr const& e) { return note_tick (e); },
+		                    [this] (uint8_t p) { return staff_of (p); },
+		                    [this] (int64_t t) { return _region->absolute_time_to_source_beats (timepos_t (Beats::ticks (_origin + t))); });
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	/* the copy is selected, so R repeats on */
+	_selection = added;
+	_anchor.reset ();
+	if (in_input ()) {
+		_chord_tick = -1;
+		set_cursor (dest + span, _cursor_staff);
+	}
+	ensure_visible (dest);
+	rebuild ();
+}
+
+/* ---- keyboard selection ---- */
+
+void
+ScoreView::play_selection ()
+{
+	if (!_track || _selection.empty () || !UIConfiguration::instance ().get_sound_midi_notes ()) {
+		return;
+	}
+	NotePlayer* np = new NotePlayer (_track);
+	int         k  = 0;
+	for (auto const& n : _selection) {
+		if (++k > 8) {
+			break;
+		}
+		np->add (n);
+	}
+	np->play ();
+	/* NotePlayer deletes itself */
+}
+
+void
+ScoreView::step_chord (int dir, bool extend)
+{
+	std::vector<std::pair<int64_t, NotePtr>> const v = region_notes ();
+	if (v.empty ()) {
+		return;
+	}
+
+	int64_t ref = -1;
+	int     st  = 0;
+	int     top = -1;
+	for (auto const& tn : v) {
+		if (!_selection.count (tn.second)) {
+			continue;
+		}
+		/* the selected note farthest in that direction (the top one of its chord) */
+		if (ref < 0 || (dir > 0 ? tn.first > ref : tn.first < ref) || (tn.first == ref && tn.second->note () > top)) {
+			ref = tn.first;
+			top = tn.second->note ();
+			st  = staff_of (tn.second->note ());
+		}
+	}
+
+	int64_t target = -1;
+	if (ref < 0) {
+		/* nothing selected: the first (last) chord */
+		target = dir > 0 ? v.front ().first : v.back ().first;
+		st     = staff_of ((dir > 0 ? v.front () : v.back ()).second->note ());
+	} else if (dir > 0) {
+		for (auto const& tn : v) {
+			if (tn.first > ref && staff_of (tn.second->note ()) == st) {
+				target = tn.first;
+				break;
+			}
+		}
+	} else {
+		for (auto i = v.rbegin (); i != v.rend (); ++i) {
+			if (i->first < ref && staff_of (i->second->note ()) == st) {
+				target = i->first;
+				break;
+			}
+		}
+	}
+	if (target < 0) {
+		return;
+	}
+
+	std::set<NotePtr> chord;
+	NotePtr           high;
+	for (auto const& tn : v) {
+		if (tn.first == target && staff_of (tn.second->note ()) == st) {
+			chord.insert (tn.second);
+			high = tn.second; /* sorted by pitch: the last is the top */
+		}
+	}
+	if (extend) {
+		_selection.insert (chord.begin (), chord.end ());
+	} else {
+		/* MuseScore selects the top note of the next chord */
+		_selection.clear ();
+		_selection.insert (high);
+		_anchor = high;
+	}
+	if (high) {
+		play (high);
+	}
+	ensure_visible (target);
+	queue_draw ();
+}
+
+void
+ScoreView::step_bar (int dir)
+{
+	std::vector<std::pair<int64_t, NotePtr>> const v = region_notes ();
+	if (v.empty ()) {
+		return;
+	}
+	int64_t ref = -1;
+	int     st  = 0;
+	for (auto const& tn : v) {
+		if (_selection.count (tn.second) && (ref < 0 || (dir > 0 ? tn.first > ref : tn.first < ref))) {
+			ref = tn.first;
+			st  = staff_of (tn.second->note ());
+		}
+	}
+	int64_t bar = ref < 0 ? (dir > 0 ? -1 : (int64_t) _bars.size ()) : ref / _bar_len;
+
+	/* the first chord of the next bar that has notes, on the same staff if it can */
+	for (bar += dir; bar >= 0 && bar < (int64_t) _bars.size (); bar += dir) {
+		NotePtr any, same;
+		int64_t ta = -1, ts = -1;
+		for (auto const& tn : v) {
+			if (tn.first / _bar_len != bar) {
+				continue;
+			}
+			if (ta < 0 || tn.first == ta) {
+				ta  = tn.first;
+				any = tn.second;
+			}
+			if (staff_of (tn.second->note ()) == st && (ts < 0 || tn.first == ts)) {
+				ts   = tn.first;
+				same = tn.second;
+			}
+		}
+		NotePtr const n = same ? same : any;
+		if (n) {
+			_selection.clear ();
+			_selection.insert (n);
+			_anchor = n;
+			play (n);
+			ensure_visible (bar * _bar_len);
+			queue_draw ();
+			return;
+		}
+	}
+}
+
+void
+ScoreView::step_in_chord (int dir)
+{
+	if (_selection.empty ()) {
+		return;
+	}
+	NotePtr cur = (_anchor && _selection.count (_anchor)) ? _anchor : *_selection.begin ();
+	int64_t const t = note_tick (cur);
+
+	NotePtr next;
+	for (auto const& tn : region_notes ()) {
+		if (tn.first != t || tn.second == cur) {
+			continue;
+		}
+		int const p = tn.second->note ();
+		if (dir > 0 ? p > cur->note () && (!next || p < next->note ()) : p < cur->note () && (!next || p > next->note ())) {
+			next = tn.second;
+		}
+	}
+	if (!next) {
+		return;
+	}
+	_selection.clear ();
+	_selection.insert (next);
+	_anchor = next;
+	play (next);
+	queue_draw ();
+}
+
+void
+ScoreView::select_range (NotePtr const& a, NotePtr const& b)
+{
+	int64_t const ta = note_tick (a), tb = note_tick (b);
+	int64_t const lo = std::min (ta, tb), hi = std::max (ta, tb);
+	int const     s0 = std::min (staff_of (a->note ()), staff_of (b->note ()));
+	int const     s1 = std::max (staff_of (a->note ()), staff_of (b->note ()));
+	_selection.clear ();
+	for (auto const& tn : region_notes ()) {
+		int const s = staff_of (tn.second->note ());
+		if (tn.first >= lo && tn.first <= hi && s >= s0 && s <= s1) {
+			_selection.insert (tn.second);
+		}
+	}
+	queue_draw ();
+}
+
+void
+ScoreView::select_all ()
+{
+	_selection.clear ();
+	for (auto const& tn : region_notes ()) {
+		_selection.insert (tn.second);
+	}
+	_anchor.reset ();
+	queue_draw ();
 }

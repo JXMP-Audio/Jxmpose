@@ -72,9 +72,17 @@ Ardour project.
   and paste (at the mouse), Ctrl+D duplicates,
   Ctrl+Z undoes, double-click on empty space writes the selected pad,
   a click on the ruler moves the playhead, Ctrl+wheel zooms.
-  In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and
-  click notes into the staff; click or drag notes to select and move them,
-  pick a value to change their length, Delete removes, Up/Down transposes,
+  The score is edited like MuseScore: `N` starts note input (an input cursor
+  shows where notes go), keys 3–7 pick the value (16th … whole, `.` dotted,
+  Ctrl+3 triplet, Ctrl+5 quintuplet), A–G write a note at the cursor in the
+  octave nearest the previous one (Shift: add to the chord), `0` a rest,
+  Alt+2–9 an interval above, `T` a tied note; a click adds to the chord there,
+  Shift+click replaces, right click writes a rest. Outside note input a click
+  selects (Ctrl toggles, Shift selects a range, drag lassoes), ←/→ step
+  through the chords (Ctrl: bars, Alt+↑/↓ within the chord), a value key
+  changes the selected notes' length, ↑/↓ transposes (Ctrl: octave,
+  Alt+Shift: diatonic), `+`/`-`/`=` sharp/flat/natural, `R` repeats, `T` ties
+  to the next note, `Q`/`W` halve/double, Ctrl+A/C/X/V, Delete removes,
   Ctrl+Z undoes. Triplets, sixteenth triplets and quintuplets are recognised
   from the MIDI and written as such, overlapping lines become a second voice,
   the key signature comes from the track's key or is guessed from the
@@ -131,8 +139,13 @@ Ardour project.
 | `C` | cut tool (MIDI editor: edit note channels) |
 | `Shift+Delete` | remove the selected tracks |
 | Chord lane: `Ctrl+A / C / X / V / D`, `Delete`, `Esc`, `←/→` | select all, copy, cut, paste at the mouse, duplicate, delete, deselect, step |
-| Score: `4`–`8`, `0`, `.`, `;` | note value 16th … whole, free, dotted, triplet |
-| Score: `Delete`, `↑/↓`, `Ctrl+Z / Y` | delete, transpose, undo / redo |
+| Score: `N`, `Esc` | note input on / off (Esc again: deselect) |
+| Score: `3`–`7`, `.`, `Ctrl+3`, `Ctrl+5` | note value 16th … whole, dotted, triplet, quintuplet |
+| Score: `A`–`G`, `Shift+A`–`G`, `0`, `Alt+2`–`9` | enter note, add to chord, rest, interval above |
+| Score: `←/→`, `Shift+←/→`, `Ctrl+←/→`, `Alt+↑/↓` | next / previous chord (input: move cursor), extend, bar, note in chord |
+| Score: `↑/↓`, `Ctrl+↑/↓`, `Alt+Shift+↑/↓`, `+ - =` | transpose semitone, octave, diatonic step; sharp, flat, natural |
+| Score: `T`, `R`, `Q / W`, `Delete` | tie, repeat, halve / double, delete |
+| Score: `Ctrl+A / C / X / V`, `Ctrl+Z / Y` | select all, copy, cut, paste at the selection or cursor; undo / redo |
 | Edit Notes: `S`, `M`, `←/→`, `Ctrl+Z` | split, merge, nudge 10 ms, undo |
 
 ## Known issues

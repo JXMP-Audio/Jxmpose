@@ -44,10 +44,15 @@ namespace PBD {
 
 /** Music notation view and editor of one MIDI region.
  *
- * Editing: pick a note value (set_insert_length) and click into the staff
- * to add a note; click a note to select it (Shift adds), Delete removes,
- * Up/Down transposes by a semitone (Ctrl: octave). Changes go through the
- * MIDI model's diff commands, so they can be undone.
+ * Editing works like MuseScore. In note input mode (set_insert_length > 0)
+ * an input cursor shows where the next note goes: A-G enter a note there
+ * (the octave nearest the previous note, replacing what was there),
+ * Shift+A-G add to the chord, 0 enters a rest, Alt+2..9 add an interval,
+ * T ties, clicking adds (Shift+click replaces, right click: rest).
+ * Otherwise click selects (Ctrl toggles, Shift selects a range, drag in
+ * empty space lassoes), Left/Right step through the chords, Up/Down
+ * transpose (Ctrl: octave, Alt+Shift: diatonic), Delete removes. Changes
+ * go through the MIDI model's diff commands, so they can be undone.
  *
  * Notes are quantized to a 16th grid (or a tuplet grid where the MIDI
  * plays triplets, quintuplets or sixteenth triplets) and laid out on a
@@ -76,9 +81,10 @@ public:
 	void set_history (PBD::HistoryOwner* h) { _history = h; }
 	/** MIDI channel (0..15) for new notes */
 	void set_channel (uint8_t c) { _channel = c; }
-	/** length of notes added by clicking, in ticks; 0: select only */
-	void set_insert_length (int64_t len) { _insert_len = len; }
+	/** note input mode: the length of new notes in ticks; 0 leaves it */
+	void set_insert_length (int64_t len);
 	int64_t insert_length () const { return _insert_len; }
+	bool in_input () const { return _insert_len > 0; }
 
 	/** the track that plays notes while editing */
 	void set_track (std::shared_ptr<ARDOUR::MidiTrack>);
@@ -134,6 +140,7 @@ protected:
 	bool on_button_press_event (GdkEventButton*);
 	bool on_button_release_event (GdkEventButton*);
 	bool on_motion_notify_event (GdkEventMotion*);
+	bool on_leave_notify_event (GdkEventCrossing*);
 
 private:
 	std::shared_ptr<ARDOUR::MidiRegion> _region;
@@ -181,6 +188,69 @@ private:
 	int64_t _drag_dt;        ///< ticks
 	int     _drag_dp;        ///< semitones
 
+	/* insert preview: where a click would add a note */
+	bool    _hover;
+	int64_t _hover_tick;     ///< ticks from the first bar
+	uint8_t _hover_pitch;
+	void    update_hover (double x, double y);
+	void    clear_hover ();
+	void    draw_hover (Cairo::RefPtr<Cairo::Context>);
+
+	/* note input cursor (ticks from the first bar) and the chord entered last */
+	int64_t _cursor;
+	int     _cursor_staff;
+	int64_t _chord_tick;     ///< -1: none (Shift+letter adds to the chord there)
+	int64_t _chord_len;
+	int     _chord_top;      ///< highest pitch of that chord
+	int     _last_pitch;     ///< previous entered pitch (octave of letter entry), -1: none
+	void    draw_cursor (Cairo::RefPtr<Cairo::Context>);
+	void    set_cursor (int64_t tick, int staff);
+	void    reset_cursor ();
+
+	/* letter, rest and interval entry */
+	void enter_letter (int letter, bool add_to_chord);
+	void enter_rest (int64_t tick, int staff);
+	void enter_interval (int steps);
+	void set_accidental (int alter);
+	void add_tie ();
+	void repeat_selection ();
+	void scale_selection_length (bool longer);
+	void diatonic_transpose (int steps);
+
+	/* keyboard selection */
+	NotePtr _anchor;         ///< first end of a Shift+click range
+	void step_chord (int dir, bool extend);
+	void step_bar (int dir);
+	void step_in_chord (int dir);
+	void select_range (NotePtr const& a, NotePtr const& b);
+	void select_all ();
+	void ensure_visible (int64_t tick);
+	void play_selection ();
+
+	/* lasso */
+	bool   _lasso;
+	bool   _lasso_add;
+	double _lasso_x0, _lasso_y0, _lasso_x1, _lasso_y1;
+
+	/* clipboard: notes relative to the earliest one */
+	struct Clip {
+		int64_t dt, len;
+		uint8_t pitch, velocity;
+	};
+	std::vector<Clip> _clipboard;
+	void copy_selection ();
+	void paste ();
+
+	int  staff_of (uint8_t pitch) const;
+	/** notes inside the region, sorted by time and pitch (ticks from the first bar) */
+	std::vector<std::pair<int64_t, NotePtr>> region_notes () const;
+	/** add a note of the insert length; replace: notes of its staff inside it go */
+	NotePtr write_note (int64_t tick, int64_t len, uint8_t pitch, bool replace);
+	/** highest pitch starting at a tick on a staff, -1: none */
+	int     top_pitch_at (int64_t tick, int staff) const;
+	/** in note input: the next letter goes near the selected (last entered) note */
+	void    follow_selection_pitch ();
+
 	int64_t note_tick (NotePtr const&) const;
 	bool    position_of (int64_t tick, uint8_t pitch, double& x, double& y) const;
 	int64_t snap_step () const;
@@ -190,7 +260,6 @@ private:
 
 	bool    pitch_at (double x, double y, size_t& bar, uint8_t& pitch) const;
 	int64_t time_in_bar (Bar const&, double x) const;
-	void    add_note (int64_t tick, uint8_t pitch);
 	void    delete_selection ();
 	void    transpose_selection (int semitones);
 
