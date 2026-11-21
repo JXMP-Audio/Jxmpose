@@ -58,7 +58,7 @@ Ardour project.
   change its length (snapped to beats, Shift: sixteenths), Delete removes
   it, drag on empty space selects with a rubber band (Ctrl: adds),
   Ctrl/Shift-click selects more, Ctrl+A all, Ctrl+C / X / V copy, cut
-  and paste (after the selection, else at the playhead), Ctrl+D duplicates,
+  and paste (at the mouse), Ctrl+D duplicates,
   Ctrl+Z undoes, double-click on empty space writes the selected pad,
   a click on the ruler moves the playhead, Ctrl+wheel zooms.
   In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and

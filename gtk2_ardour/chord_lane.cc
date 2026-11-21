@@ -107,9 +107,11 @@ ChordLane::ChordLane (ChordPads& p)
 	, _band_x1 (0)
 	, _band_y0 (0)
 	, _band_y1 (0)
+	, _mouse_x (0)
+	, _mouse_in (false)
 {
 	add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK
-	            | Gdk::SCROLL_MASK | Gdk::KEY_PRESS_MASK | Gdk::FOCUS_CHANGE_MASK);
+	            | Gdk::ENTER_NOTIFY_MASK | Gdk::SCROLL_MASK | Gdk::KEY_PRESS_MASK | Gdk::FOCUS_CHANGE_MASK);
 	set_can_focus (true);
 	set_size_request (600, 180);
 	std::vector<Gtk::TargetEntry> targets;
@@ -459,6 +461,8 @@ ChordLane::on_button_press_event (GdkEventButton* ev)
 bool
 ChordLane::on_motion_notify_event (GdkEventMotion* ev)
 {
+	_mouse_x  = ev->x;
+	_mouse_in = true;
 	if (_drag == 4) {
 		return true;
 	}
@@ -536,8 +540,17 @@ ChordLane::on_button_release_event (GdkEventButton* ev)
 }
 
 bool
+ChordLane::on_enter_notify_event (GdkEventCrossing* ev)
+{
+	_mouse_x  = ev->x;
+	_mouse_in = true;
+	return false;
+}
+
+bool
 ChordLane::on_leave_notify_event (GdkEventCrossing*)
 {
+	_mouse_in = false;
 	if (_hover >= 0) {
 		_hover = -1;
 		queue_draw ();
@@ -598,7 +611,17 @@ ChordLane::handle_key (GdkEventKey* ev)
 			delete_selected ();
 		}
 	} else if (ctrl && key == GDK_KEY_v && !_clipboard.empty ()) {
-		int64_t at = selection_end ();
+		/* like the other editors: at the mouse (onto a chord: from its start), else after the selection,
+		 * else at the playhead */
+		int64_t at = -1;
+		if (_mouse_in) {
+			int       edge;
+			const int b = block_at (_mouse_x, ruler_h + 1, edge);
+			at          = b >= 0 ? _blocks[b].start : snap (x_tick (_mouse_x), ev->state & GDK_SHIFT_MASK);
+		}
+		if (at < 0) {
+			at = selection_end ();
+		}
 		if (at < 0) {
 			at = _playhead >= 0 ? snap (_playhead, true) : _r_start;
 		}
@@ -811,6 +834,19 @@ ChordLane::insert_notes (std::vector<uint8_t> const& p, std::string const& name,
 	model->apply_diff_command_as_commit (*_history, cmd);
 	select_starting (tick, tick + 1);
 	queue_draw ();
+}
+
+void
+ChordLane::insert_at_playhead (std::vector<uint8_t> const& p, std::string const& name, int64_t len)
+{
+	if (!_session || !_region) {
+		return;
+	}
+	int64_t t = timepos_t (_session->audible_sample ()).beats ().to_ticks () - _origin;
+	if (t < _r_start || t >= _r_end) {
+		t = _r_start;
+	}
+	insert_notes (p, name, snap (t, false), len);
 }
 
 bool

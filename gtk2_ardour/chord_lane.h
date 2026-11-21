@@ -56,8 +56,10 @@ public:
 
 	/** write notes at a position of the region's timeline (ticks from the start of its first bar) */
 	void insert_notes (std::vector<uint8_t> const&, std::string const& name, int64_t tick, int64_t len);
+	/** write notes at the playhead (snapped to the beat; outside the region at its start) */
+	void insert_at_playhead (std::vector<uint8_t> const&, std::string const& name, int64_t len);
 	/** Delete removes the selected chords, Left/Right select the neighbours, Ctrl+A/C/X/V/D select all,
-	 *  copy, cut, paste (after the selection, else at the playhead) and duplicate, Escape deselects */
+	 *  copy, cut, paste (at the mouse, outside the lane after the selection or at the playhead) and duplicate, Escape deselects */
 	bool handle_key (GdkEventKey*);
 
 protected:
@@ -70,6 +72,7 @@ protected:
 	bool on_focus_in_event (GdkEventFocus*);
 	bool on_focus_out_event (GdkEventFocus*);
 	bool on_leave_notify_event (GdkEventCrossing*);
+	bool on_enter_notify_event (GdkEventCrossing*);
 	void on_drag_data_received (Glib::RefPtr<Gdk::DragContext> const&, int, int, Gtk::SelectionData const&, guint, guint);
 	bool on_drag_motion (Glib::RefPtr<Gdk::DragContext> const&, int, int, guint);
 	void on_drag_leave (Glib::RefPtr<Gdk::DragContext> const&, guint);
@@ -118,6 +121,8 @@ private:
 	int     _hover;
 	int     _drag;       ///< 0 none, 1 move, 2 left edge, 3 right edge, 4 ruler, 5 rubber band
 	double  _band_x1, _band_y0, _band_y1;
+	double  _mouse_x;    ///< where Ctrl+V pastes, while the pointer is over the lane
+	bool    _mouse_in;
 	std::set<int64_t> _band_base; ///< selection before a Ctrl rubber band
 	int     _drag_block;
 	double  _drag_x0;

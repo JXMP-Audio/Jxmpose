@@ -474,6 +474,11 @@ MidiEditorPanel::insert_notes (std::vector<uint8_t> const& p, std::string const&
 void
 MidiEditorPanel::insert_chord_at_playhead (int pad)
 {
+	if (_mode == ChordEditor) {
+		/* the piano roll is hidden: the chord lane writes it */
+		chord_lane.insert_at_playhead (chord_pads.pitches (pad), chord_pads.name (pad), chord_pads.length ().to_ticks ());
+		return;
+	}
 	std::shared_ptr<MidiRegion> r = _region;
 	MidiView* mv = _pianoroll->midi_view ();
 	if (mv && mv->midi_region ()) {
