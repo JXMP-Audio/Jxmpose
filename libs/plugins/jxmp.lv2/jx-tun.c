@@ -19,14 +19,18 @@
 /* JX-TUN: tuner and automatic pitch correction for a single voice or
  * instrument. Pitch is detected with YIN on a decimated copy of the input
  * (~12 kHz, 85 ms window, every ~10 ms); in Correct mode the signal is
- * shifted towards the nearest note of the chosen key and scale. */
+ * shifted towards the nearest note of the chosen key and scale, with
+ * Keep Formants (default) by PSOLA (jxmp_psola.h, the voice keeps its
+ * timbre, 15 ms latency), else by the granular shifter (no latency). */
 
 #include "jxmp.h"
+#include "jxmp_psola.h"
 
 enum {
 	P_IN_L = 0, P_IN_R, P_OUT_L, P_OUT_R,
 	P_MODE, P_REF, P_KEY, P_SCALE, P_SPEED, P_AMOUNT, P_MUTE,
 	P_FREQ, P_NOTE, P_CENTS,
+	P_FORMANT, P_LATENCY, /* appended later: older sessions keep their port indices */
 	P_LAST
 };
 
@@ -72,6 +76,7 @@ typedef struct {
 	/* correction */
 	JxDelay   dl[2];
 	JxShifter sh;
+	JxPsola   ps;
 	float     corr;   /* current correction, semitones */
 	float     win;
 	float     g_out;
@@ -127,6 +132,7 @@ activate (LV2_Handle h)
 	self->pitch = -1;
 	self->corr  = 0;
 	self->g_out = 1;
+	jx_psola_reset (&self->ps);
 	jx_bq_reset (&self->aa[0]);
 	jx_bq_reset (&self->aa[1]);
 }
@@ -225,6 +231,10 @@ run (LV2_Handle h, uint32_t n)
 	const float speed  = jx_tc (*p[P_SPEED], self->sr / 64.f); /* updated every 64 samples */
 	const float mute   = (mode == 0 && *p[P_MUTE] > 0.5f) ? 0.f : 1.f;
 	const float gtc    = jx_tc (5.f, self->sr);
+	const bool  formant = p[P_FORMANT] && *p[P_FORMANT] > 0.5f;
+	if (p[P_LATENCY]) {
+		*p[P_LATENCY] = (mode == 1 && formant) ? (float)jx_psola_latency (self->sr) : 0.f;
+	}
 
 	float target = -1;
 	for (uint32_t i = 0; i < n; ++i) {
@@ -258,9 +268,13 @@ run (LV2_Handle h, uint32_t n)
 			jx_delay_write (&self->dl[0], xl);
 			jx_delay_write (&self->dl[1], xr);
 			const float ratio = powf (2.f, self->corr / 12.f);
-			JxShifter   r     = self->sh;
-			y[0]              = jx_shift (&r, &self->dl[0], ratio, self->win);
-			y[1]              = jx_shift (&self->sh, &self->dl[1], ratio, self->win);
+			if (formant) {
+				jx_psola (&self->ps, self->dl, self->sr, ratio, self->pitch >= 0 ? self->period : 0.f, &y[0], &y[1]);
+			} else {
+				JxShifter r = self->sh;
+				y[0]        = jx_shift (&r, &self->dl[0], ratio, self->win);
+				y[1]        = jx_shift (&self->sh, &self->dl[1], ratio, self->win);
+			}
 		}
 		self->g_out += gtc * (mute - self->g_out);
 		p[P_OUT_L][i] = y[0] * self->g_out;

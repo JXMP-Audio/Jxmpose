@@ -209,7 +209,7 @@ layouts ()
 	{ /* JX-TUN */
 		JxLayout m { "urn:jxmp:jx-tun", 0x9CD64A, {}, 200 };
 		m.rows.push_back ({ { "TUNER", { choice ("mode", "MODE", { "TUNE", "CORRECT" }), knob ("ref", "A REF"), button ("mute", "MUTE", C_REC) } } });
-		m.rows.push_back ({ { "CORRECTION", { step ("key", "KEY"), step ("scale", "SCALE"), knob ("speed", "SPEED"), main_knob ("amount", "AMOUNT") } } });
+		m.rows.push_back ({ { "CORRECTION", { step ("key", "KEY"), step ("scale", "SCALE"), knob ("speed", "SPEED"), main_knob ("amount", "AMOUNT"), button ("formant", "FORMANTS", C_MAIN) } } });
 		l.push_back (m);
 	}
 	{ /* JX-DNR */

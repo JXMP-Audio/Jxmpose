@@ -164,6 +164,7 @@
 #include "mixer_ui.h"
 #include "meterbridge.h"
 #include "mouse_cursors.h"
+#include "note_edit.h"
 #include "nsm.h"
 #include "opts.h"
 #include "plugin_dspload_window.h"
@@ -2682,6 +2683,9 @@ Clean-up will move all unused files to a \"dead\" location."));
 		editor->finish_cleanup ();
 		return;
 	}
+
+	/* Edit Notes keeps its pitch analyses in the analysis folder: drop the ones nothing uses any more */
+	NoteEdit::cleanup_analysis_cache (*_session, rep);
 
 	editor->finish_cleanup ();
 

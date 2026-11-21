@@ -132,9 +132,12 @@ def tun():
         toggle('mute', 'Mute While Tuning'),
         meter('freq', 'Frequency', 0, 2000, 'hz'),
         meter('note', 'Note', 0, 127),
-        meter('cents', 'Cents', -50, 50, 'cent')]
+        meter('cents', 'Cents', -50, 50, 'cent'),
+        # appended: older sessions keep their port indices
+        toggle('formant', 'Keep Formants', 1),
+        ctl('latency', 'Latency', 0, 0, 8192, out=True, latency=True)]
     return dict(sym='jx-tun', name='JX-TUN Tuner', cls='PitchPlugin',
-                comment='Tuner (note, cents, frequency) and automatic pitch correction to the nearest note of a key and scale.',
+                comment='Tuner (note, cents, frequency) and automatic pitch correction to the nearest note of a key and scale. Keep Formants (on by default) keeps the timbre of the voice at 15 ms latency in Correct mode.',
                 ports=ports)
 
 def dnr():

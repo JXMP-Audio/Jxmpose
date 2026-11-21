@@ -21,6 +21,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <set>
 #include <sstream>
 
 #include <glib.h>
@@ -37,7 +38,9 @@
 
 #include "ardour/audioregion.h"
 #include "ardour/audiosource.h"
+#include "ardour/region_factory.h"
 #include "ardour/session.h"
+#include "ardour/session_directory.h"
 
 #include "note_edit.h"
 
@@ -62,6 +65,57 @@ region_master_range (std::shared_ptr<AudioRegion> r, samplepos_t& start, samplec
 	len   = r->length_samples ();
 }
 
+static std::string
+cache_name (PBD::ID const& source, samplepos_t start, samplecnt_t len)
+{
+	return string_compose ("editnotes-%1-%2-%3.bin", source.to_s (), start, len);
+}
+
+void
+cleanup_analysis_cache (Session& s, CleanupReport& rep)
+{
+	/* the files still used: one per range of a source some audio region plays (also regions only in the
+	 * region list: Edit Notes may be opened on them again) */
+	std::set<std::string> used;
+	for (auto const& i : RegionFactory::all_regions ()) {
+		std::shared_ptr<AudioRegion> ar = std::dynamic_pointer_cast<AudioRegion> (i.second);
+		if (!ar || ar->master_sources ().empty ()) {
+			continue;
+		}
+		samplepos_t start;
+		samplecnt_t len;
+		region_master_range (ar, start, len);
+		used.insert (cache_name (ar->master_sources ().front ()->id (), start, len));
+	}
+
+	const std::string dir = s.analysis_dir ();
+	GDir*             d   = g_dir_open (dir.c_str (), 0, 0);
+	if (!d) {
+		return;
+	}
+	vector<std::string> gone;
+	while (const gchar* n = g_dir_read_name (d)) {
+		const std::string name (n);
+		if (name.compare (0, 10, "editnotes-") == 0 && name.size () > 14 && name.compare (name.size () - 4, 4, ".bin") == 0
+		    && !used.count (name)) {
+			gone.push_back (name);
+		}
+	}
+	g_dir_close (d);
+
+	/* moved to the "dead" folder like the other cleaned files: Flush Wastebasket deletes them */
+	const std::string dead = s.session_directory ().dead_path ();
+	for (auto const& name : gone) {
+		const std::string path = Glib::build_filename (dir, name);
+		GStatBuf          st;
+		const size_t      size = g_stat (path.c_str (), &st) == 0 ? st.st_size : 0;
+		if (g_rename (path.c_str (), Glib::build_filename (dead, name).c_str ()) == 0) {
+			rep.paths.push_back (path);
+			rep.space += size;
+		}
+	}
+}
+
 bool
 source_range (std::shared_ptr<AudioRegion> r, SourceRange& sr)
 {
@@ -82,8 +136,7 @@ source_range (std::shared_ptr<AudioRegion> r, SourceRange& sr)
 		return false;
 	}
 	sr.cache_key  = key.str ();
-	sr.cache_file = Glib::build_filename (r->session ().analysis_dir (),
-	                                      string_compose ("editnotes-%1-%2-%3.bin", sr.sources.front ()->id ().to_s (), sr.start, sr.len));
+	sr.cache_file = Glib::build_filename (r->session ().analysis_dir (), cache_name (sr.sources.front ()->id (), sr.start, sr.len));
 	return true;
 }
 

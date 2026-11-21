@@ -40,6 +40,7 @@
 class XMLNode;
 
 namespace ARDOUR {
+	struct CleanupReport;
 	class AudioRegion;
 	class Region;
 	class Session;
@@ -122,6 +123,10 @@ bool read_master (SourceRange const&, std::vector<std::vector<float> >& out);
  *  The result is kept in the session's analysis folder: the same range of the same sources is read from
  *  there the next time (sources do not change once written). */
 int analyse (SourceRange const&, Analysis&, PBD::Progress* progress = 0);
+
+/** Session > Clean-up: removes the cached analyses no audio region uses any more (its source is gone, or no
+ *  region plays that range of it now); the removed files are added to the report */
+void cleanup_analysis_cache (ARDOUR::Session&, ARDOUR::CleanupReport&);
 
 /** The analysis cache (exposed for the tests): false if the file is missing, damaged or made from other audio */
 bool save_analysis (std::string const& file, std::string const& key, Analysis const&);

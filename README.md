@@ -370,7 +370,9 @@ it.
 | Undo the last change | `Ctrl+Z` |
 
 Every change is rendered in the background (a small ring in the corner) and
-is one undo step. The notes are saved with the session.
+is one undo step. The notes are saved with the session. The analyses are
+kept in the session's `analysis` folder; *Session › Clean-up › Clean-up
+Unused Sources* moves the ones no region uses any more to the wastebasket.
 
 ---
 
@@ -435,7 +437,7 @@ Ten JX plugins come with JXMPOSE (in the plugin browser under *JX-…*):
 | **JX-MBC** Multiband Compressor | compress lows, low-mids, high-mids and highs separately (mastering, taming a boomy bass) |
 | **JX-VOC** Vocoder | the "robot voice": your voice shapes a synth played into the sidechain (or noise) |
 | **JX-PIT** Pitch Shifter | two shifted copies of the sound (octaves, harmonies, doubling) mixed with the original |
-| **JX-TUN** Tuner | shows the note and how far off it is; *Correct* mode pulls a voice to the notes of a key (auto-tune) |
+| **JX-TUN** Tuner | shows the note and how far off it is; *Correct* mode pulls a voice to the notes of a key (auto-tune), with *Keep Formants* on by default |
 | **JX-DNR** Noise Reduction | removes steady noise (hiss, hum): turn on *Learn Noise* during a part with only noise, turn it off, done |
 | **JX-FRZ** Spectral Freeze | *Hold* freezes the current sound into an endless drone |
 | **JX-HRM** Harmonizer | play MIDI notes and your voice sings them as extra harmony voices (up to 8) |
@@ -443,12 +445,13 @@ Ten JX plugins come with JXMPOSE (in the plugin browser under *JX-…*):
 | **JX-LOOP** Looper | eight loop slots that record in sync and overdub |
 | **JX-SMP** Sampler | plays one sound file from MIDI notes (drum hits, one-shots, simple instruments) |
 
-**Keep Formants** (JX-PIT and JX-HRM): shifted voices normally sound like a
+**Keep Formants** (JX-PIT, JX-HRM and JX-TUN): shifted voices normally sound like a
 chipmunk (up) or a giant (down), because the shift also moves the
 resonances that make a voice sound like itself (formants). With
 **FORMANTS** on, only the pitch moves and the voice keeps its character.
 It is made for a single voice (vocal, solo instrument) and adds 15 ms of
-latency, which JXMPOSE compensates automatically.
+latency, which JXMPOSE compensates automatically. In JX-PIT and JX-HRM it
+is off by default, in JX-TUN (only in *Correct* mode) on.
 
 The bundled ACE plugins (Compressor, Expander, EQ, Delay, Reverb, Fluid
 Synth) also open as JXMP panels.
@@ -674,7 +677,7 @@ are JXMPOSE's own.
 
 - The chord lane is made for chords: on a drum region every hit becomes
   its own narrow block.
-- *Keep Formants* (JX-PIT, JX-HRM) follows one voice; on chords or full
+- *Keep Formants* (JX-PIT, JX-HRM, JX-TUN) follows one voice; on chords or full
   mixes use it off. JX-TUN corrects one voice at a time.
 - Without *Keep Formants*, JX-PIT and JX-HRM shift granularly: large shifts
   sound grainy on sustained sounds.
