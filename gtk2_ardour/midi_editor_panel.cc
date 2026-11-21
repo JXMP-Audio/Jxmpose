@@ -162,6 +162,10 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	drum_notation_button.signal_clicked.connect ([this] () {
 		bool const yn = !drum_notation_button.get_active ();
 		drum_notation_button.set_active (yn);
+		/* the button says what the region is: switched off, the notes are pitched again, so the key
+		 * signature and the chord symbols come back (before, they stayed hidden as drum content
+		 * until a detour through the Key Editor) */
+		score_view.set_drum_content (yn);
 		score_view.set_percussion (yn);
 	});
 	mode_bar.pack_end (drum_notation_button, false, false);
