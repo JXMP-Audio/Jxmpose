@@ -38,6 +38,8 @@ namespace ARDOUR {
  *  tension and a bass note, with an inversion and an octave. Holding a pad plays the chord on the track's
  *  instrument, dragging it onto the note editor writes it there. A key fills the pads with its chords and
  *  names them by degree (major, minor, the modes and more scales). The pads are shared by all MIDI editors. */
+class ArdourWindow;
+
 class ChordPads : public Gtk::VBox
 {
 public:
@@ -56,6 +58,15 @@ public:
 
 	/** "Insert at Playhead" was clicked with this pad selected */
 	sigc::signal<void, int> InsertRequested;
+
+	/** the key of the pads (root 0 .. 11, scale index); set_key fills the pads when it changes */
+	int  key_root () const { return _key_root; }
+	int  key_scale () const { return _scale; }
+	void set_key (int root, int scale);
+	/** the pitch classes of the key's scale, bit n = pitch class n */
+	uint16_t key_pitch_classes () const;
+	/** the key was changed with the Key or Scale menu */
+	sigc::signal<void> KeyChanged;
 
 	/** drag and drop target of a pad or a chord of the circle of fifths; the data is the pad number, or
 	 *  "c<root>:<type>:<tension>:<octave>" for a chord of the circle */
@@ -129,6 +140,7 @@ private:
 	ArdourWidgets::ArdourButton                 _fill_button;
 	ArdourWidgets::ArdourButton                 _edit_button;
 	Gtk::VBox                                   _editor_box;
+	ArdourWindow*                               _editor_window; /* the chord editor floats: under the pads it squeezed them */
 	void show_editor (bool);
 	ArdourWidgets::ArdourButton                 _no_bass_button;
 	std::vector<ArdourWidgets::ArdourButton*>   _type_buttons;

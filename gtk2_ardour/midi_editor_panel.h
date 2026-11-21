@@ -96,6 +96,8 @@ private:
 	void insert_chord (int pad, Temporal::Beats source_start);
 	void insert_notes (std::vector<uint8_t> const&, std::string const& name, Temporal::Beats source_start);
 	void insert_chord_at_playhead (int pad);
+	void load_region_key ();
+	void save_region_key ();
 	void chord_dropped (Glib::RefPtr<Gdk::DragContext> const&, int x, int y, Gtk::SelectionData const&, guint, guint);
 	ArdourWidgets::ArdourButton all_drums_button;
 	ArdourWidgets::ArdourButton drum_notation_button;

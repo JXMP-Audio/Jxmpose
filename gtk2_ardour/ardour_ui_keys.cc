@@ -161,11 +161,14 @@ ARDOUR_UI::key_press_focus_accelerator_handler (Gtk::Window& window, GdkEventKey
 	                                                  window.get_title(),
 	                                                  gdk_keyval_name (ev->keyval)));
 
-	if (Keyboard::some_magic_widget_has_focus() && (ev->state == Keyboard::PrimaryModifier)) {
+	/* compare only the relevant modifiers: with NumLock (or CapsLock) on, the state carries
+	 * Mod2 (Lock) too and Primary-c went to the editor's Copy instead of the focused widget */
+	if (Keyboard::some_magic_widget_has_focus() && ((ev->state & mask) == Keyboard::PrimaryModifier)) {
 		switch (ev->keyval) {
 		case GDK_x:
 		case GDK_c:
 		case GDK_v:
+		case GDK_d: /* duplicate (chord lane) */
 			cutcopypaste = true;
 			DEBUG_TRACE (DEBUG::Accelerators, string_compose ("seen cut/copy/paste keys with magic widget focus, Primary-%1\n", gdk_keyval_name (ev->keyval)));
 			break;

@@ -89,6 +89,7 @@
 #include "sfdb_ui.h"
 #include "timers.h"
 #include "transport_masters_dialog.h"
+#include "stream_link.h"
 #include "trigger_page.h"
 #include "virtual_keyboard_window.h"
 
@@ -111,6 +112,8 @@ ARDOUR_UI::set_session (Session *s)
 	}
 
 	_basic_ui = new BasicUI (*s);
+
+	StreamLink::instance ().set_session (s);
 
 	/* adjust sensitivity of menu bar options to reflect presence/absence
 	 * of session

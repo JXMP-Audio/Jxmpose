@@ -37,6 +37,7 @@
 #include <ytkmm/accelmap.h>
 #include <ytkmm/menu.h>
 #include <ytkmm/offscreenwindow.h>
+#include <ytkmm/sizegroup.h>
 #include <ytkmm/stock.h>
 
 #include "pbd/convert.h"
@@ -410,7 +411,19 @@ Mixer_UI::Mixer_UI ()
 	inner_pane.add (vca_vpacker);
 
 	global_hpacker.pack_start (inner_pane, true, true);
-	global_hpacker.pack_start (out_packer, false, false);
+	{
+		/* the master column starts as low as the strips under the group tabs, so its rows
+		 * line up with theirs (the strips share their row heights, see MixerStrip) */
+		Gtk::VBox*     out_vbox = manage (new Gtk::VBox ());
+		Gtk::EventBox* tabs_gap = manage (new Gtk::EventBox ());
+		Glib::RefPtr<Gtk::SizeGroup> sg = Gtk::SizeGroup::create (Gtk::SIZE_GROUP_VERTICAL);
+		sg->add_widget (*_group_tabs);
+		sg->add_widget (*tabs_gap);
+		out_vbox->pack_start (*tabs_gap, false, false);
+		out_vbox->pack_start (out_packer, true, true);
+		out_vbox->show_all ();
+		global_hpacker.pack_start (*out_vbox, false, false);
+	}
 
 	inner_pane.set_divider (0, .8);
 

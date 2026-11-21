@@ -109,6 +109,7 @@ EngineControl::EngineControl ()
 	, update_devices_button (_("Refresh Devices"))
 	, use_buffered_io_button (_("Use Buffered I/O"), ArdourButton::led_default_elements)
 	, try_autostart_button (_("Autostart"), ArdourButton::led_default_elements)
+	, stream_button (_("Also send Master to the stream (PipeWire)"), ArdourButton::led_default_elements)
 	, lm_measure_label (_("Measure"))
 	, lm_use_button (_("Use Results"))
 	, lm_back_button (_("Back to Settings (Ignore Results)"))
@@ -325,6 +326,15 @@ EngineControl::EngineControl ()
 	set_tooltip (try_autostart_button,
 	             string_compose (_("Always try these settings when starting %1, if the same device is available"), PROGRAM_NAME));
 
+	stream_button.signal_clicked.connect (mem_fun (*this, &EngineControl::stream_button_clicked));
+	stream_button.set_name ("generic button");
+	stream_button.set_can_focus (true);
+	stream_button.set_active (ARDOUR::Config->get_connect_to_stream ());
+	set_tooltip (stream_button,
+	             string_compose (_("<b>When enabled</b> %1 running on JACK of PipeWire connects Master and the Click also to the stream capture "
+	                               "of a screen sharing app (Fluxer) on start, and as soon as sharing begins, so the stream hears %1.\n"
+	                               "<b>When disabled</b> these connections are removed and not made again."), PROGRAM_NAME));
+
 	ARDOUR::Config->ParameterChanged.connect (*this, invalidator (*this), std::bind (&EngineControl::config_parameter_changed, this, _1), gui_context ());
 
 	/* Pick up any existing audio setup configuration, if appropriate */
@@ -485,6 +495,8 @@ EngineControl::config_parameter_changed (std::string const& p)
 {
 	if (p == "try-autostart-engine") {
 		try_autostart_button.set_active (ARDOUR::Config->get_try_autostart_engine ());
+	} else if (p == "connect-to-stream") {
+		stream_button.set_active (ARDOUR::Config->get_connect_to_stream ());
 	} else if (p == "monitoring-model") {
 		switch (ARDOUR::Config->get_monitoring_model ()) {
 			case ARDOUR::SoftwareMonitoring:
@@ -649,6 +661,9 @@ EngineControl::build_full_control_notebook ()
 	settings_table.attach (monitor_model_combo, 1, 2, row, row + 1, xopt, SHRINK);
 	++row;
 
+	attach_stream_button (row);
+	++row;
+
 	settings_table.attach (latency_expander, 0, 4, row, row + 1, xopt, SHRINK);
 	++row;
 
@@ -696,7 +711,21 @@ EngineControl::build_no_control_notebook ()
 		settings_table.attach (lbl_buffer_size,            0, 1, row, row + 1, xopt, SHRINK);
 		settings_table.attach (buffer_size_combo,          1, 2, row, row + 1, xopt, SHRINK);
 		settings_table.attach (buffer_size_duration_label, 2, 3, row, row + 1, xopt, SHRINK);
+		++row;
 	}
+
+	attach_stream_button (row);
+}
+
+void
+EngineControl::attach_stream_button (int row)
+{
+	/* only JACK (as PipeWire provides it) has other apps' ports to connect to */
+	std::shared_ptr<ARDOUR::AudioBackend> backend = ARDOUR::AudioEngine::instance ()->current_backend ();
+	if (!backend || backend->name () != X_("JACK")) {
+		return;
+	}
+	settings_table.attach (stream_button, 0, 2, row, row + 1, AttachOptions (FILL | EXPAND), SHRINK, 0, 4);
 }
 
 EngineControl::~EngineControl ()
@@ -2776,6 +2805,14 @@ EngineControl::try_autostart_button_clicked ()
 
 	ARDOUR::Config->set_try_autostart_engine (!try_autostart_button.get_active ());
 	try_autostart_button.set_active (ARDOUR::Config->get_try_autostart_engine ());
+}
+
+void
+EngineControl::stream_button_clicked ()
+{
+	ARDOUR::Config->set_connect_to_stream (!stream_button.get_active ());
+	stream_button.set_active (ARDOUR::Config->get_connect_to_stream ());
+	ARDOUR::Config->save_state ();
 }
 
 void
