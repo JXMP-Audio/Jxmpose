@@ -114,6 +114,10 @@ QuickControls::QuickControls ()
 
 QuickControls::~QuickControls ()
 {
+	/* the knobs are not managed (rebuild () replaces them): they go with us */
+	for (int i = 0; i < n_slots; ++i) {
+		delete _slots[i].knob;
+	}
 	delete _menu;
 }
 
