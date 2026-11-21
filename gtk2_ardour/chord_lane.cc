@@ -99,16 +99,17 @@ ChordLane::ChordLane (ChordPads& p)
 	, _sel (-1)
 	, _hover (-1)
 	, _drag (0)
-	, _drag_block (-1)
-	, _drag_x0 (0)
-	, _drag_delta (0)
-	, _dragged (false)
-	, _drop_tick (-1)
 	, _band_x1 (0)
 	, _band_y0 (0)
 	, _band_y1 (0)
 	, _mouse_x (0)
 	, _mouse_in (false)
+	, _drag_block (-1)
+	, _drag_x0 (0)
+	, _drag_delta (0)
+	, _dragged (false)
+	, _press_in_selection (false)
+	, _drop_tick (-1)
 {
 	add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK
 	            | Gdk::ENTER_NOTIFY_MASK | Gdk::SCROLL_MASK | Gdk::KEY_PRESS_MASK | Gdk::FOCUS_CHANGE_MASK);
@@ -310,7 +311,7 @@ ChordLane::on_expose_event (GdkEventExpose* ev)
 	for (size_t i = 0; i < _blocks.size (); ++i) {
 		Block const& b  = _blocks[i];
 		int64_t      s  = b.start, e = b.end;
-		if ((int) i == _drag_block && _dragged) {
+		if (_dragged && drags ((int) i)) {
 			if (_drag == 1) {
 				s += _drag_delta;
 				e += _drag_delta;
@@ -443,6 +444,10 @@ ChordLane::on_button_press_event (GdkEventButton* ev)
 		for (int i = std::min (_sel, b); i <= std::max (_sel, b); ++i) {
 			_selection.insert (_blocks[i].start);
 		}
+	} else if (is_sel (b)) {
+		/* a selected chord: the whole selection is dragged */
+		_press_in_selection = true;
+		_sel                = b;
 	} else {
 		select_only (b);
 	}
@@ -481,6 +486,12 @@ ChordLane::on_motion_notify_event (GdkEventMotion* ev)
 		queue_draw ();
 		return true;
 	}
+	if (_drag && _drag_block >= (int) _blocks.size ()) {
+		/* the notes changed under the drag (undo, recording): give it up */
+		_drag       = 0;
+		_drag_block = -1;
+		_dragged    = false;
+	}
 	if (_drag && _drag_block >= 0) {
 		const bool    fine = ev->state & GDK_SHIFT_MASK;
 		const int64_t raw  = (int64_t) ((ev->x - _drag_x0) * Beats::PPQN / _ppb);
@@ -491,7 +502,12 @@ ChordLane::on_motion_notify_event (GdkEventMotion* ev)
 		} else {
 			d = snap (b.start + raw, fine) - b.start;
 			if (_drag == 1) {
-				d = std::max (d, _r_start - b.start);
+				/* none of the dragged chords goes before the region */
+				for (size_t i = 0; i < _blocks.size (); ++i) {
+					if (drags ((int) i)) {
+						d = std::max (d, _r_start - _blocks[i].start);
+					}
+				}
 			}
 		}
 		if (std::abs (ev->x - _drag_x0) > 3) {
@@ -531,7 +547,10 @@ ChordLane::on_button_release_event (GdkEventButton* ev)
 	_pads.silence ();
 	if (_drag && _drag != 4 && _dragged && _drag_delta != 0) {
 		apply_drag ();
+	} else if (_press_in_selection && !_dragged && _drag_block >= 0 && _drag_block < (int) _blocks.size ()) {
+		select_only (_drag_block);
 	}
+	_press_in_selection = false;
 	_drag       = 0;
 	_drag_block = -1;
 	_dragged    = false;
@@ -757,27 +776,41 @@ ChordLane::apply_drag ()
 	if (!model || !_history || _drag_block < 0 || _drag_block >= (int) _blocks.size ()) {
 		return;
 	}
-	Block const&                b   = _blocks[_drag_block];
-	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_drag == 1 ? _("move chord") : _("change chord length"));
-	for (auto const& n : b.notes) {
-		const int64_t t = note_tick (n);
-		const int64_t e = t + n->length ().to_ticks ();
-		if (_drag == 1) {
-			cmd->change (n, MidiModel::NoteDiffCommand::StartTime, source_beats (t + _drag_delta));
-		} else if (_drag == 2) {
-			/* the start moves, the end stays */
-			const int64_t ns = std::min (e - Beats::PPQN / 16, b.start + _drag_delta);
-			cmd->change (n, MidiModel::NoteDiffCommand::StartTime, source_beats (ns));
-			cmd->change (n, MidiModel::NoteDiffCommand::Length, Beats::ticks (e - ns));
-		} else {
-			const int64_t ne = std::max (t + Beats::PPQN / 16, b.end + _drag_delta);
-			cmd->change (n, MidiModel::NoteDiffCommand::Length, Beats::ticks (ne - t));
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_drag == 1 ? _("move chords") : _("change chord length"));
+	std::vector<int64_t>        keep;
+	for (size_t i = 0; i < _blocks.size (); ++i) {
+		if (!drags ((int) i)) {
+			continue;
+		}
+		Block const& b = _blocks[i];
+		for (auto const& n : b.notes) {
+			const int64_t t = note_tick (n);
+			const int64_t e = t + n->length ().to_ticks ();
+			if (_drag == 1) {
+				cmd->change (n, MidiModel::NoteDiffCommand::StartTime, source_beats (t + _drag_delta));
+			} else if (_drag == 2) {
+				/* the start moves, the end stays */
+				const int64_t ns = std::min (e - Beats::PPQN / 16, b.start + _drag_delta);
+				cmd->change (n, MidiModel::NoteDiffCommand::StartTime, source_beats (ns));
+				cmd->change (n, MidiModel::NoteDiffCommand::Length, Beats::ticks (e - ns));
+			} else {
+				const int64_t ne = std::max (t + Beats::PPQN / 16, b.end + _drag_delta);
+				cmd->change (n, MidiModel::NoteDiffCommand::Length, Beats::ticks (ne - t));
+			}
+		}
+		keep.push_back (_drag == 3 ? b.start : (_drag == 2 ? std::min (b.end - Beats::PPQN / 16, b.start + _drag_delta) : b.start + _drag_delta));
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	/* the dragged chords stay selected */
+	_selection.clear ();
+	for (size_t i = 0; i < _blocks.size (); ++i) {
+		for (int64_t k : keep) {
+			if (std::abs (_blocks[i].start - k) <= chord_slop) {
+				_selection.insert (_blocks[i].start);
+				_sel = (int) i;
+			}
 		}
 	}
-	const int64_t keep = b.start + (_drag == 3 ? 0 : _drag_delta);
-	model->apply_diff_command_as_commit (*_history, cmd);
-	/* keep the moved chord selected */
-	select_starting (keep, keep + 1);
 }
 
 void

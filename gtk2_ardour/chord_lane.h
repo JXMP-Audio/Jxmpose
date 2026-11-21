@@ -128,6 +128,8 @@ private:
 	double  _drag_x0;
 	int64_t _drag_delta;
 	bool    _dragged;
+	bool    _press_in_selection; ///< a click on a selected chord: on release without a drag only it stays selected
+	bool    drags (int i) const { return _drag_block >= 0 && (i == _drag_block || (is_sel (_drag_block) && is_sel (i))); }
 	int64_t _drop_tick;  ///< where a dragged chord would land, -1 none
 
 	static const int ruler_h = 20;

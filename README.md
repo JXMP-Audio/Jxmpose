@@ -26,12 +26,20 @@ Ardour project.
   target. Fold it away with the arrow on the right edge.
 - **Editor** — compact track headers, editable region info line, regions in
   track colour, new tracks start neutral grey (double-click the colour strip
-  to recolour), optional automatic type folders.
-- **Mixer** — console-style strips with collapsible racks, sidebar tabs,
-  mixer scenes.
+  to recolour), optional automatic type folders (Track › Sort into Folders
+  by Type), the lane of the selected track is lightened. Double-click a
+  track name to rename it, also while the track is armed for recording (it
+  is disarmed for the rename and armed again; not while it records).
+  Double-click a MIDI region for the MIDI editor, an audio region for
+  *Edit Notes*.
+- **Mixer** — console-style strips with collapsible racks (remembered),
+  R/W automation buttons, the channel name at the bottom in track colour, a
+  built-in channel strip in every strip, sidebar tabs, mixer scenes.
 - **Track folders** — route groups shown as collapsible folders with
   subfolders; a collapsed folder keeps its instrument bus visible.
-- **MIDI editor** — switch between *Key*, *Drum* (one row per drum sound),
+- **MIDI editor** — in its own window or in the editor's bottom pane,
+  switch between *Key*, *Drum* (one row per drum sound: the sounds used, or
+  the whole drum map with *All Drums*; Alt+wheel changes the row height),
   *Score* (music notation, also as drum notation) and *Chord Pads* for the
   same region. Chord Pads (laid out like Cubase's): sixteen pads in two
   rows, each a chord built from a root and a bass note, a type (Maj, Min,
@@ -55,8 +63,9 @@ Ardour project.
   notes that start together show as one block named by their chord (any
   voicing, slash chords too). Drop pads or circle chords on it to write
   them (onto a block: replace it), drag a block to move it, its edges to
-  change its length (snapped to beats, Shift: sixteenths), Delete removes
-  it, drag on empty space selects with a rubber band (Ctrl: adds),
+  change its length (snapped to beats, Shift: sixteenths; with several
+  selected all of them move), Delete removes it, Left / Right step through
+  the chords and play them, drag on empty space selects with a rubber band (Ctrl: adds),
   Ctrl/Shift-click selects more, Ctrl+A all, Ctrl+C / X / V copy, cut
   and paste (at the mouse), Ctrl+D duplicates,
   Ctrl+Z undoes, double-click on empty space writes the selected pad,
@@ -110,6 +119,29 @@ Ardour project.
   untouched audio; the original recording is never changed, every edit is
   one undo step (Ctrl+Z works in the window) and the notes are saved with
   the session.
+
+## Keyboard shortcuts (added or changed)
+
+| Key | Action |
+| --- | --- |
+| Numpad `*` | arm the selected tracks and record (again: stop recording) |
+| `Shift+C` | metronome on / off |
+| `C` | cut tool (MIDI editor: edit note channels) |
+| `Shift+Delete` | remove the selected tracks |
+| Chord lane: `Ctrl+A / C / X / V / D`, `Delete`, `Esc`, `←/→` | select all, copy, cut, paste at the mouse, duplicate, delete, deselect, step |
+| Score: `4`–`8`, `0`, `.`, `;` | note value 16th … whole, free, dotted, triplet |
+| Score: `Delete`, `↑/↓`, `Ctrl+Z / Y` | delete, transpose, undo / redo |
+| Edit Notes: `S`, `M`, `←/→`, `Ctrl+Z` | split, merge, nudge 10 ms, undo |
+
+## Known issues
+
+- With PipeWire the metronome output may start unconnected (no physical
+  outputs are reported): connect *Click* once in the routing, the
+  connection is remembered from then on.
+- The chord lane is made for chords: on a drum region every hit becomes
+  its own narrow block.
+- Edit Notes analyses the whole region when it opens, which takes a moment
+  on long recordings.
 
 ## Building
 
