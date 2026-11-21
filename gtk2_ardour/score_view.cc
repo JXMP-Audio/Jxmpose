@@ -24,6 +24,7 @@
 #include <set>
 
 #include "pbd/compose.h"
+#include "pbd/string_convert.h"
 
 #include "temporal/tempo.h"
 
@@ -89,6 +90,20 @@ enum : uint32_t {
 	Rest8th        = 0xE4E6,
 	Rest16th       = 0xE4E7,
 };
+
+/* MuseScore's default colours: score background, paper, voice 1 and 2 */
+const double bg_rgb[3]    = { 0xBC / 255., 0xC1 / 255., 0xCC / 255. };
+const double paper_rgb[3] = { 0xF9 / 255., 0xF9 / 255., 0xF9 / 255. };
+const double voice_rgb[2][3] = {
+	{ 0x00 / 255., 0x65 / 255., 0xBF / 255. },
+	{ 0x00 / 255., 0x7F / 255., 0x00 / 255. },
+};
+
+void
+set_voice_color (Cairo::RefPtr<Cairo::Context> const& cr, int voice, double alpha = 1.)
+{
+	cr->set_source_rgba (voice_rgb[voice][0], voice_rgb[voice][1], voice_rgb[voice][2], alpha);
+}
 
 const int64_t whole   = 7680;
 const int64_t half    = 3840;
@@ -365,6 +380,13 @@ ScoreView::ScoreView ()
 	, _beat_value (4)
 	, _first_bar (1)
 	, _layout_width (0)
+	, _page_x (0)
+	, _page_w (0)
+	, _page_h (0)
+	, _margin (0)
+	, _title_h (0)
+	, _n_pages (0)
+	, _page_view (true)
 	, _history (0)
 	, _channel (0)
 	, _insert_len (0)
@@ -446,6 +468,7 @@ ScoreView::set_staff_space (double sp)
 {
 	_sp = std::max (4., std::min (30., sp));
 	rebuild ();
+	StatusChanged ();
 }
 
 void
@@ -1410,33 +1433,76 @@ ScoreView::staff_y (System const& s, int staff) const
 	return s.y + _sp * 6 + (staff == 0 ? 0 : _sp * 11);
 }
 
+double
+ScoreView::page_gap () const
+{
+	return 16. * UIConfiguration::instance ().get_ui_scale ();
+}
+
+double
+ScoreView::page_top (size_t page) const
+{
+	return page_gap () + page * (_page_h + page_gap ());
+}
+
+std::string
+ScoreView::instrument_name () const
+{
+	return _track ? _track->name () : std::string ();
+}
+
 void
 ScoreView::layout ()
 {
 	_systems.clear ();
 
 	Gtk::Allocation const a (get_allocation ());
-	double const margin = _sp * 2;
-	double const avail  = std::max (200., (double) a.get_width () - 2 * margin);
-	_layout_width       = a.get_width ();
+	double const gap = page_gap ();
+	_layout_width    = a.get_width ();
 
-	size_t b = 0;
-	double y = _sp * 2;
+	/* page view, like MuseScore: A4 pages on the score background */
+	/* A4 is about 120 staff spaces wide (1.75 mm staves): the page grows
+	 * with the zoom, up to the window width */
+	_page_w  = std::max (300., std::min ((double) a.get_width () - 2 * gap, _sp * 120));
+	/* continuous view: one sheet, as long as the systems need */
+	_page_h  = _page_view ? _page_w * 297. / 210. : 1e12;
+	_page_x  = std::max (gap, (a.get_width () - _page_w) / 2);
+	_margin  = std::max (_sp * 2, _page_w * 0.06);
+	_title_h = _region ? _sp * 7 : 0;
+
+	double const name_indent = instrument_name ().empty () ? 0 : _sp * 6;
+	double const left_edge   = _page_x + _margin;
+	double const right_edge  = _page_x + _page_w - _margin;
+	double const top_margin  = _margin * 0.6;
+
+	size_t page = 0;
+	double y    = page_top (0) + top_margin + _title_h;
+	size_t b    = 0;
 	while (b < _bars.size ()) {
+		bool const first = _systems.empty ();
+		double const content_top = page_top (page) + top_margin + (page == 0 ? _title_h : 0);
+		/* the next page when the system does not fit (one at least on each) */
+		if (y > content_top + 1 && y + system_height () > page_top (page) + _page_h - top_margin) {
+			++page;
+			y = page_top (page) + top_margin;
+		}
+
 		System s;
 		s.first_bar = b;
+		s.page      = page;
 		s.y         = y;
-		s.x0        = margin + _sp * 4.5 + key_width (fifths_at (b)) + (_systems.empty () ? _sp * 3 : 0);
+		s.left      = left_edge + (first ? name_indent : 0);
+		s.x0        = s.left + _sp * 4.5 + key_width (fifths_at (b)) + (first ? _sp * 3 : 0);
 
 		double w = 0;
 		size_t n = 0;
-		while (b + n < _bars.size () && (n == 0 || s.x0 + w + _bars[b + n].width <= margin + avail)) {
+		while (b + n < _bars.size () && (n == 0 || s.x0 + w + _bars[b + n].width <= right_edge)) {
 			w += _bars[b + n].width;
 			++n;
 		}
 		s.n_bars = n;
 		bool const last = (b + n >= _bars.size ());
-		double const room = margin + avail - s.x0;
+		double const room = right_edge - s.x0;
 		s.stretch = (!last && w > 0) ? std::max (1., room / w) : std::min (1.5, std::max (1., room / std::max (1., w)));
 
 		double bx = s.x0;
@@ -1450,8 +1516,12 @@ ScoreView::layout ()
 		b += n;
 		y += system_height ();
 	}
+	_n_pages = page + 1;
+	if (!_page_view) {
+		_page_h = std::max (y + top_margin - page_top (0), _sp * 20);
+	}
 
-	set_size_request (-1, (int) std::max (y + _sp * 2, _sp * 30));
+	set_size_request (-1, (int) page_top (_n_pages));
 	queue_draw ();
 }
 
@@ -1516,11 +1586,36 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 
 	_hits.clear ();
 
-	/* paper */
-	cr->set_source_rgb (0.97, 0.96, 0.94);
+	/* score background and the pages (MuseScore's page view) */
+	cr->set_source_rgb (bg_rgb[0], bg_rgb[1], bg_rgb[2]);
 	cr->paint ();
+	for (size_t pg = 0; pg < std::max<size_t> (1, _n_pages); ++pg) {
+		double const py = page_top (pg);
+		for (int k = 3; k >= 1; --k) {
+			cr->rectangle (_page_x + k * 0.7, py + k * 0.9, _page_w, _page_h);
+			cr->set_source_rgba (0, 0, 0, 0.07);
+			cr->fill ();
+		}
+		cr->rectangle (_page_x, py, _page_w, _page_h);
+		cr->set_source_rgb (paper_rgb[0], paper_rgb[1], paper_rgb[2]);
+		cr->fill ();
+	}
 
 	cr->set_source_rgb (0.1, 0.1, 0.1);
+
+	/* title: the region name, centred on the first page */
+	if (_region && _title_h > 0) {
+		cr->select_font_face ("Serif", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_NORMAL);
+		cr->set_font_size (_sp * 2.4);
+		Cairo::TextExtents te;
+		std::string const title = _region->name ();
+		cr->get_text_extents (title, te);
+		double const fit = std::min (1., (_page_w - 2 * _margin) / std::max (1., te.width));
+		cr->set_font_size (_sp * 2.4 * fit);
+		cr->get_text_extents (title, te);
+		cr->move_to (_page_x + (_page_w - te.width) / 2 - te.x_bearing, page_top (0) + _margin * 0.6 + _sp * 3.5);
+		cr->show_text (title);
+	}
 
 	if (_bars.empty ()) {
 		cr->select_font_face ("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_NORMAL);
@@ -1534,8 +1629,6 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 	double const line_w = std::max (1., sp * 0.13);
 	double const stem_w = std::max (1., sp * 0.12);
 	double const headw  = glyph_width (cr, NoteheadBlack);
-	double const margin = sp * 2;
-
 	int cur_fifths = _fifths; /* key of the bar being drawn */
 
 	/* staff position: pitch spelling, or the drum map */
@@ -1587,6 +1680,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 
 	for (size_t si = 0; si < _systems.size (); ++si) {
 		System const& sys (_systems[si]);
+		double const  margin = sys.left; /* where the staff lines start */
 
 		double x_end = sys.x0;
 		for (size_t b = 0; b < sys.n_bars; ++b) {
@@ -1651,6 +1745,25 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 					draw_glyph (cr, TimeSig0 + (c - '0'), x, top + 3 * sp);
 					x += glyph_width (cr, TimeSig0 + (c - '0'));
 				}
+			}
+		}
+
+		/* instrument name left of the first system, as in MuseScore */
+		if (si == 0) {
+			std::string const name = instrument_name ();
+			if (!name.empty ()) {
+				cr->select_font_face ("Serif", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_NORMAL);
+				cr->set_font_size (sp * 1.4);
+				Cairo::TextExtents te;
+				cr->get_text_extents (name, te);
+				double const room = sp * 6 - sp * 2.4;
+				if (te.width > room) {
+					cr->set_font_size (sp * 1.4 * room / te.width);
+					cr->get_text_extents (name, te);
+				}
+				double const mid = _percussion ? top0 + 2 * sp : (top0 + top1 + 4 * sp) / 2;
+				cr->move_to (margin - sp * 2.4 - te.width - te.x_bearing, mid - te.y_bearing - te.height / 2);
+				cr->show_text (name);
 			}
 		}
 
@@ -1909,7 +2022,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 						}
 						bool const sel = note && _selection.count (note);
 						if (sel) {
-							cr->set_source_rgb (0.15, 0.45, 0.95);
+							set_voice_color (cr, v2 ? 1 : 0);
 						}
 						draw_glyph (cr, h, x + head_dx[m], y_of (ds[m].first));
 						if (sel) {
@@ -2222,7 +2335,7 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 
 	/* drag preview: the selected notes at their new place */
 	if (_dragging && (_drag_dt || _drag_dp)) {
-		cr->set_source_rgba (0.15, 0.45, 0.95, 0.55);
+		set_voice_color (cr, 0, 0.55);
 		for (auto const& n : _selection) {
 			int const p = n->note () + _drag_dp;
 			double gx, gy;
@@ -2235,11 +2348,18 @@ ScoreView::draw (Cairo::RefPtr<Cairo::Context> cr)
 	draw_cursor (cr);
 	draw_hover (cr);
 
+	/* the status bar follows what is drawn */
+	std::string const status = status_text ();
+	if (status != _last_status) {
+		_last_status = status;
+		Glib::signal_idle ().connect_once (sigc::mem_fun (*this, &ScoreView::emit_status));
+	}
+
 	if (_lasso) {
 		cr->rectangle (std::min (_lasso_x0, _lasso_x1), std::min (_lasso_y0, _lasso_y1), std::fabs (_lasso_x1 - _lasso_x0), std::fabs (_lasso_y1 - _lasso_y0));
-		cr->set_source_rgba (0.15, 0.45, 0.95, 0.12);
+		set_voice_color (cr, 0, 0.12);
 		cr->fill_preserve ();
-		cr->set_source_rgba (0.15, 0.45, 0.95, 0.7);
+		set_voice_color (cr, 0, 0.7);
 		cr->set_line_width (1);
 		cr->stroke ();
 	}
@@ -2338,7 +2458,16 @@ ScoreView::pitch_at (double x, double y, size_t& bar_index, uint8_t& pitch) cons
 	if (_systems.empty ()) {
 		return false;
 	}
-	int const si = std::max (0, std::min ((int) _systems.size () - 1, (int) floor ((y - _systems.front ().y) / system_height ())));
+	/* the system nearest to y (pages leave gaps between them) */
+	size_t si   = 0;
+	double best = 1e18;
+	for (size_t i = 0; i < _systems.size (); ++i) {
+		double const d = std::fabs (y - (_systems[i].y + system_height () / 2));
+		if (d < best) {
+			best = d;
+			si   = i;
+		}
+	}
 	System const& sys (_systems[si]);
 
 	/* which bar */
@@ -3112,7 +3241,7 @@ ScoreView::draw_hover (Cairo::RefPtr<Cairo::Context> cr)
 	auto y_of = [&] (int dd) { return bottom - (dd - ref) * sp / 2.; };
 
 	cr->save ();
-	cr->set_source_rgba (0.15, 0.45, 0.95, 0.6);
+	set_voice_color (cr, 0, 0.6);
 
 	/* ledger lines */
 	cr->set_line_width (line_w);
@@ -3220,13 +3349,18 @@ ScoreView::draw_cursor (Cairo::RefPtr<Cairo::Context> cr)
 	double const  top   = staff_y (sys, st);
 	double const  headw = glyph_width (cr, NoteheadBlack);
 
+	/* MuseScore: the voice colour at 50/255 with a solid left edge 0.14 sp wide */
+	double const cx = x - _sp * 0.35;
+	double const cy = top - _sp;
+	double const cw = headw + _sp * 0.7;
+	double const ch = 6 * _sp;
 	cr->save ();
-	cr->rectangle (x - _sp * 0.35, top - _sp, headw + _sp * 0.7, 6 * _sp);
-	cr->set_source_rgba (0.15, 0.45, 0.95, 0.22);
-	cr->fill_preserve ();
-	cr->set_source_rgba (0.15, 0.45, 0.95, 0.8);
-	cr->set_line_width (std::max (1., _sp * 0.12));
-	cr->stroke ();
+	cr->rectangle (cx, cy, cw, ch);
+	set_voice_color (cr, 0, 50. / 255.);
+	cr->fill ();
+	cr->rectangle (cx, cy, std::max (1., _sp * 0.14), ch);
+	set_voice_color (cr, 0);
+	cr->fill ();
 	cr->restore ();
 }
 
@@ -3882,4 +4016,120 @@ ScoreView::select_all ()
 	}
 	_anchor.reset ();
 	queue_draw ();
+}
+
+/* ---- status bar, zoom, toolbar ---- */
+
+namespace {
+
+std::string
+duration_name (int64_t len)
+{
+	struct V { int64_t ticks; const char* name; };
+	static const V values[] = {
+		{ 7680, N_("Whole") }, { 3840, N_("Half") }, { 1920, N_("Quarter") },
+		{ 960, N_("Eighth") }, { 480, N_("16th") }, { 240, N_("32nd") },
+	};
+	for (auto const& v : values) {
+		if (len == v.ticks) {
+			return _(v.name);
+		}
+		if (len == v.ticks * 3 / 2) {
+			return string_compose (_("Dotted %1"), _(v.name));
+		}
+		if (len == v.ticks * 2 / 3) {
+			return string_compose (_("%1 triplet"), _(v.name));
+		}
+	}
+	if (len == 384) {
+		return _("16th quintuplet");
+	}
+	return string_compose (_("%1 beats"), PBD::to_string (len / 1920.).substr (0, 5));
+}
+
+/** "2", "2.5": a beat number as MuseScore shows it */
+std::string
+beat_string (double beat)
+{
+	char buf[32];
+	snprintf (buf, sizeof (buf), "%.3f", beat);
+	std::string s (buf);
+	while (!s.empty () && s.back () == '0') {
+		s.pop_back ();
+	}
+	if (!s.empty () && s.back () == '.') {
+		s.pop_back ();
+	}
+	return s;
+}
+
+} // namespace
+
+std::string
+ScoreView::status_text () const
+{
+	if (!_region || _bars.empty ()) {
+		return std::string ();
+	}
+	auto where = [&] (int64_t t) {
+		int64_t const bar = std::max<int64_t> (0, t) / _bar_len;
+		double const  beat = 1. + (double) (std::max<int64_t> (0, t) - bar * _bar_len) / beat_ticks ();
+		return string_compose (_("Measure: %1; Beat: %2"), _first_bar + bar, beat_string (beat));
+	};
+
+	if (_selection.size () == 1) {
+		NotePtr const n = *_selection.begin ();
+		int64_t const t = note_tick (n);
+		std::string pitch;
+		if (_percussion) {
+			pitch = string_compose (_("drum %1"), (int) n->note ());
+		} else {
+			int d, alt;
+			spell (n->note (), d, alt, fifths_at (std::max<int64_t> (0, t) / _bar_len));
+			int const oct = (int) floor (d / 7.);
+			pitch = std::string (1, "CDEFGAB"[d - oct * 7]) + (alt > 0 ? "♯" : (alt < 0 ? "♭" : "")) + PBD::to_string (oct);
+		}
+		/* MuseScore: "Note; Pitch: E4; Duration: Quarter; ... Measure: 2; Beat: 1" */
+		return string_compose (_("Note; Pitch: %1; Duration: %2; Velocity: %3; %4"),
+		                       pitch, duration_name (n->length ().to_ticks ()), (int) n->velocity (), where (t));
+	}
+	if (_selection.size () > 1) {
+		return string_compose (_("List selection; %1 notes"), _selection.size ());
+	}
+	if (in_input ()) {
+		return string_compose (_("Note input; Duration: %1; %2"), duration_name (_insert_len), where (_cursor));
+	}
+	return _("Press N to enter notes, click a note to select it");
+}
+
+void
+ScoreView::set_page_view (bool yn)
+{
+	if (_page_view != yn) {
+		_page_view = yn;
+		layout ();
+		StatusChanged ();
+	}
+}
+
+int
+ScoreView::zoom_percent () const
+{
+	return (int) lrint (100. * _sp / (9. * UIConfiguration::instance ().get_ui_scale ()));
+}
+
+void
+ScoreView::zoom_step (int dir)
+{
+	set_staff_space (dir > 0 ? _sp * 1.1 : _sp / 1.1);
+}
+
+void
+ScoreView::rest_or_delete ()
+{
+	if (in_input ()) {
+		enter_rest (_cursor, _cursor_staff);
+	} else {
+		delete_selection ();
+	}
 }

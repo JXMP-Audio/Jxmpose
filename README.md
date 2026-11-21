@@ -72,6 +72,11 @@ Ardour project.
   and paste (at the mouse), Ctrl+D duplicates,
   Ctrl+Z undoes, double-click on empty space writes the selected pad,
   a click on the ruler moves the playhead, Ctrl+wheel zooms.
+  The score looks like MuseScore: A4 pages on a grey background (or one
+  continuous sheet), the region name as the title, the track name left of the
+  first system, a note input bar above (input mode, durations, dot, rest,
+  accidentals, tie, tuplets as music glyphs) and a status bar below showing
+  the selected note (pitch, duration, velocity, measure, beat) and the zoom.
   The score is edited like MuseScore: `N` starts note input (an input cursor
   shows where notes go), keys 3–7 pick the value (16th … whole, `.` dotted,
   Ctrl+3 triplet, Ctrl+5 quintuplet), A–G write a note at the cursor in the

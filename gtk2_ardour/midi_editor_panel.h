@@ -23,7 +23,9 @@
 #include <vector>
 
 #include <ytkmm/box.h>
+#include <ytkmm/label.h>
 #include <ytkmm/scrolledwindow.h>
+#include <ytkmm/separator.h>
 
 #include "widgets/ardour_button.h"
 
@@ -103,8 +105,20 @@ private:
 	ArdourWidgets::ArdourButton input_button;
 	std::vector<std::pair<ArdourWidgets::ArdourButton*, int64_t>> note_value_buttons;
 	ArdourWidgets::ArdourButton dot_button;
+	ArdourWidgets::ArdourButton rest_button;
+	ArdourWidgets::ArdourButton acc_buttons[5]; ///< double flat .. double sharp
+	ArdourWidgets::ArdourButton tie_button;
 	ArdourWidgets::ArdourButton triplet_button;
 	ArdourWidgets::ArdourButton quint_button;
+
+	/* MuseScore-like status bar under the score: selection info and zoom */
+	Gtk::HBox                   status_bar;
+	Gtk::Label                  status_label;
+	Gtk::Label                  zoom_label;
+	ArdourWidgets::ArdourButton zoom_out_button;
+	ArdourWidgets::ArdourButton zoom_in_button;
+	ArdourWidgets::ArdourButton view_mode_button;
+	void update_status ();
 	int64_t _note_base;    ///< picked value (ticks)
 	bool    _input;        ///< note input mode
 	bool    _note_dot;

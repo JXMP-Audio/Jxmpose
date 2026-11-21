@@ -26,18 +26,81 @@
 
 #include "canvas/canvas.h"
 
+#include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/keyboard.h"
 
 #include "midi_editor_panel.h"
 #include "pianoroll_midi_view.h"
 #include "pianoroll.h"
+#include "ui_config.h"
 
+#include "widgets/ardour_icon.h"
 #include "widgets/tooltips.h"
 
 #include "pbd/i18n.h"
 
 using namespace ARDOUR;
 using namespace Temporal;
+
+namespace {
+
+/** a toolbar icon: a SMuFL glyph of the Leland font, or a tie (codepoint 0) */
+struct NoteGlyph {
+	uint32_t codepoint;
+	double   size; ///< font size relative to the button height
+};
+
+const NoteGlyph glyph_16th    = { 0xE1D9, 0.80 }; /* note16thUp */
+const NoteGlyph glyph_8th     = { 0xE1D7, 0.80 }; /* note8thUp */
+const NoteGlyph glyph_quarter = { 0xE1D5, 0.80 }; /* noteQuarterUp */
+const NoteGlyph glyph_half    = { 0xE1D3, 0.80 }; /* noteHalfUp */
+const NoteGlyph glyph_whole   = { 0xE1D2, 0.80 }; /* noteWhole */
+const NoteGlyph glyph_dot     = { 0xE1E7, 1.60 }; /* augmentationDot */
+const NoteGlyph glyph_rest    = { 0xE4E5, 0.75 }; /* restQuarter */
+const NoteGlyph glyph_flat2   = { 0xE264, 0.75 };
+const NoteGlyph glyph_flat    = { 0xE260, 0.75 };
+const NoteGlyph glyph_natural = { 0xE261, 0.75 };
+const NoteGlyph glyph_sharp   = { 0xE262, 0.75 };
+const NoteGlyph glyph_sharp2  = { 0xE263, 1.10 };
+const NoteGlyph glyph_tie     = { 0, 0 };
+const NoteGlyph glyph_tuplet3 = { 0xE883, 1.10 };
+const NoteGlyph glyph_tuplet5 = { 0xE885, 1.10 };
+
+std::string
+glyph_utf8 (uint32_t c)
+{
+	std::string s;
+	s += (char) (0xE0 | (c >> 12));
+	s += (char) (0x80 | ((c >> 6) & 0x3F));
+	s += (char) (0x80 | (c & 0x3F));
+	return s;
+}
+
+void
+render_note_glyph (cairo_t* cr, int w, int h, uint32_t color, void* data)
+{
+	NoteGlyph const* g = static_cast<NoteGlyph const*> (data);
+	Gtkmm2ext::set_source_rgba (cr, color);
+	if (g->codepoint == 0) {
+		/* tie: a slim crescent */
+		double const x1 = w * 0.22, x2 = w * 0.78, y = h * 0.42, hh = h * 0.22;
+		cairo_move_to (cr, x1, y);
+		cairo_curve_to (cr, x1 + (x2 - x1) / 3, y + hh, x2 - (x2 - x1) / 3, y + hh, x2, y);
+		cairo_curve_to (cr, x2 - (x2 - x1) / 3, y + hh * 0.6, x1 + (x2 - x1) / 3, y + hh * 0.6, x1, y);
+		cairo_fill (cr);
+		return;
+	}
+	std::string const t = glyph_utf8 (g->codepoint);
+	cairo_select_font_face (cr, "Leland", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size (cr, h * g->size);
+	cairo_text_extents_t te;
+	cairo_text_extents (cr, t.c_str (), &te);
+	/* centre the ink */
+	cairo_move_to (cr, (w - te.width) / 2 - te.x_bearing, (h - te.height) / 2 - te.y_bearing);
+	cairo_show_text (cr, t.c_str ());
+}
+
+} // namespace
 
 MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, bool expandable)
 	: _pianoroll (new Pianoroll (name, with_transport, expandable))
@@ -53,6 +116,8 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	, dot_button (".")
 	, triplet_button ("3")
 	, quint_button ("5")
+	, zoom_out_button ("\u2212")
+	, zoom_in_button ("+")
 	, _note_base (1920)
 	, _input (false)
 	, _note_dot (false)
@@ -101,52 +166,86 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	});
 	mode_bar.pack_end (drum_notation_button, false, false);
 
-	/* score input, keys as in MuseScore */
-	input_button.set_name ("tab button");
-	input_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (input_button, _("Note input (key: N, Esc leaves it). A-G enter a note at the cursor (Shift: add to the chord), "
-	                                            "0 a rest, Alt+2..9 an interval above, T a tied note, Left/Right move the cursor. "
-	                                            "Click adds a note (to the chord there), Shift+click replaces, right click enters a rest.\n"
-	                                            "Outside note input: click selects (Ctrl toggles, Shift selects a range, drag lassoes), "
-	                                            "Left/Right select the next chord, Up/Down transpose (Ctrl: octave, Alt+Shift: diatonic), "
-	                                            "R repeats, T ties to the next note, Q/W halve/double, Ctrl+C/V copy/paste"));
-	input_button.signal_clicked.connect ([this] () { set_input (!_input); });
-	note_value_box.pack_start (input_button, false, false, 4);
+	/* the note input bar, laid out like MuseScore's: input mode | durations |
+	 * dot, rest | accidentals | tie | tuplets; icons are music font glyphs */
+	double const ui_scale = UIConfiguration::instance ().get_ui_scale ();
+	auto style = [&] (ArdourWidgets::ArdourButton& b, NoteGlyph const* g, const char* tip) {
+		b.set_name ("tab button");
+		b.set_corner_radius (2);
+		if (g) {
+			b.set_icon (&render_note_glyph, const_cast<NoteGlyph*> (g));
+		}
+		b.set_size_request ((int) (30 * ui_scale), (int) (28 * ui_scale));
+		ArdourWidgets::set_tooltip (b, tip);
+	};
+	auto separator = [&] () {
+		Gtk::VSeparator* sep = manage (new Gtk::VSeparator);
+		note_value_box.pack_start (*sep, false, false, 4);
+	};
 
-	struct { const char* label; int64_t ticks; const char* tip; } values[] = {
-		{ "1/1",       7680, _("Whole notes: the value of entered notes, or the length of the selected notes (key: 7)") },
-		{ "1/2",       3840, _("Half notes (key: 6)") },
-		{ "1/4",       1920, _("Quarter notes (key: 5)") },
-		{ "1/8",       960,  _("Eighth notes (key: 4)") },
-		{ "1/16",      480,  _("Sixteenth notes (key: 3)") },
+	style (input_button, 0, _("Note input (key: N, Esc leaves it). A-G enter a note at the cursor (Shift: add to the chord), "
+	                          "0 a rest, Alt+2..9 an interval above, T a tied note, Left/Right move the cursor. "
+	                          "Click adds a note (to the chord there), Shift+click replaces, right click enters a rest.\n"
+	                          "Outside note input: click selects (Ctrl toggles, Shift selects a range, drag lassoes), "
+	                          "Left/Right select the next chord, Up/Down transpose (Ctrl: octave, Alt+Shift: diatonic), "
+	                          "R repeats, T ties to the next note, Q/W halve/double, Ctrl+C/V copy/paste"));
+	input_button.set_icon (ArdourWidgets::ArdourIcon::ToolDraw);
+	input_button.signal_clicked.connect ([this] () { set_input (!_input); });
+	note_value_box.pack_start (input_button, false, false);
+	separator ();
+
+	/* short to long, as in MuseScore */
+	struct { NoteGlyph const* glyph; int64_t ticks; const char* tip; } values[] = {
+		{ &glyph_16th,    480,  _("16th note (key: 3): the value of entered notes, or the length of the selected notes") },
+		{ &glyph_8th,     960,  _("Eighth note (key: 4)") },
+		{ &glyph_quarter, 1920, _("Quarter note (key: 5)") },
+		{ &glyph_half,    3840, _("Half note (key: 6)") },
+		{ &glyph_whole,   7680, _("Whole note (key: 7)") },
 	};
 	for (auto const& v : values) {
-		ArdourWidgets::ArdourButton* b = manage (new ArdourWidgets::ArdourButton (v.label));
-		b->set_name ("tab button");
-		b->set_corner_radius (2);
-		ArdourWidgets::set_tooltip (*b, v.tip);
+		ArdourWidgets::ArdourButton* b = manage (new ArdourWidgets::ArdourButton);
+		style (*b, v.glyph, v.tip);
 		int64_t const t = v.ticks;
-		b->signal_clicked.connect ([this, t] () { set_note_value (t); });
+		b->signal_clicked.connect ([this, t] () { set_note_value (t); score_view.grab_focus (); });
 		note_value_box.pack_start (*b, false, false);
 		note_value_buttons.push_back (std::make_pair (b, v.ticks));
 	}
-	dot_button.set_name ("tab button");
-	dot_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (dot_button, _("Dotted note value (key: .)"));
-	dot_button.signal_clicked.connect ([this] () { _note_dot = !_note_dot; if (_note_dot) { _note_triplet = _note_quint = false; } apply_note_value (true); });
-	note_value_box.pack_start (dot_button, false, false, 4);
-	triplet_button.set_name ("tab button");
-	triplet_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (triplet_button, _("Triplets: quarter, eighth and sixteenth notes as triplets (key: Ctrl+3)"));
-	triplet_button.signal_clicked.connect ([this] () { _note_triplet = !_note_triplet; if (_note_triplet) { _note_dot = _note_quint = false; } apply_note_value (true); });
+	separator ();
+
+	style (dot_button, &glyph_dot, _("Augmentation dot (key: .)"));
+	dot_button.signal_clicked.connect ([this] () { _note_dot = !_note_dot; if (_note_dot) { _note_triplet = _note_quint = false; } apply_note_value (true); score_view.grab_focus (); });
+	note_value_box.pack_start (dot_button, false, false);
+	style (rest_button, &glyph_rest, _("Rest (key: 0): in note input a rest at the cursor, else the selected notes are removed"));
+	rest_button.signal_clicked.connect ([this] () { score_view.rest_or_delete (); score_view.grab_focus (); });
+	note_value_box.pack_start (rest_button, false, false);
+	separator ();
+
+	static NoteGlyph const* acc_glyphs[5] = { &glyph_flat2, &glyph_flat, &glyph_natural, &glyph_sharp, &glyph_sharp2 };
+	static const char* acc_tips[5] = {
+		N_("Double flat"), N_("Flat (key: -)"), N_("Natural (key: =)"), N_("Sharp (key: +)"), N_("Double sharp"),
+	};
+	for (int k = 0; k < 5; ++k) {
+		style (acc_buttons[k], acc_glyphs[k], _(acc_tips[k]));
+		int const alter = k - 2;
+		acc_buttons[k].signal_clicked.connect ([this, alter] () { score_view.accidental (alter); score_view.grab_focus (); });
+		note_value_box.pack_start (acc_buttons[k], false, false);
+	}
+	separator ();
+
+	style (tie_button, &glyph_tie, _("Tie (key: T): in note input the last notes sound one more value, else the selected notes join the next ones of the same pitch"));
+	tie_button.signal_clicked.connect ([this] () { score_view.tie (); score_view.grab_focus (); });
+	note_value_box.pack_start (tie_button, false, false);
+	separator ();
+
+	style (triplet_button, &glyph_tuplet3, _("Triplets: quarter, eighth and sixteenth notes as triplets (key: Ctrl+3)"));
+	triplet_button.signal_clicked.connect ([this] () { _note_triplet = !_note_triplet; if (_note_triplet) { _note_dot = _note_quint = false; } apply_note_value (true); score_view.grab_focus (); });
 	note_value_box.pack_start (triplet_button, false, false);
-	quint_button.set_name ("tab button");
-	quint_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (quint_button, _("Quintuplets: five sixteenth notes in a beat (key: Ctrl+5)"));
-	quint_button.signal_clicked.connect ([this] () { _note_quint = !_note_quint; if (_note_quint) { _note_dot = _note_triplet = false; } apply_note_value (true); });
+	style (quint_button, &glyph_tuplet5, _("Quintuplets: five sixteenth notes in a beat (key: Ctrl+5)"));
+	quint_button.signal_clicked.connect ([this] () { _note_quint = !_note_quint; if (_note_quint) { _note_dot = _note_triplet = false; _note_base = 480; } apply_note_value (true); score_view.grab_focus (); });
 	note_value_box.pack_start (quint_button, false, false);
-	note_value_box.set_spacing (2);
-	mode_bar.pack_start (note_value_box, false, false, 12);
+	note_value_box.set_spacing (1);
+	note_value_box.set_border_width (2);
+	apply_note_value (false);
 	apply_note_value (false);
 	mode_bar.set_spacing (2);
 	mode_bar.set_border_width (3);
@@ -156,7 +255,32 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	 * shorter and the bar comes and goes in an endless resize loop (seen in the low bottom pane) */
 	score_scroller.set_policy (Gtk::POLICY_NEVER, Gtk::POLICY_ALWAYS);
 	score_scroller.add (score_view);
+	score_placeholder.pack_start (note_value_box, false, false);
 	score_placeholder.pack_start (score_scroller, true, true);
+
+	/* status bar: what is selected (left), zoom (right) */
+	status_label.set_alignment (0, 0.5);
+	status_label.set_ellipsize (Pango::ELLIPSIZE_END);
+	status_bar.pack_start (status_label, true, true, 6);
+	for (ArdourWidgets::ArdourButton* b : { &zoom_out_button, &zoom_in_button, &view_mode_button }) {
+		b->set_name ("tab button");
+		b->set_corner_radius (2);
+	}
+	ArdourWidgets::set_tooltip (zoom_out_button, _("Zoom out (Ctrl+wheel)"));
+	ArdourWidgets::set_tooltip (zoom_in_button, _("Zoom in (Ctrl+wheel)"));
+	zoom_out_button.signal_clicked.connect ([this] () { score_view.zoom_step (-1); });
+	zoom_in_button.signal_clicked.connect ([this] () { score_view.zoom_step (1); });
+	ArdourWidgets::set_tooltip (view_mode_button, _("Page view (pages of A4 shape) or continuous view (one sheet)"));
+	view_mode_button.signal_clicked.connect ([this] () { score_view.set_page_view (!score_view.page_view ()); });
+	zoom_label.set_width_chars (5);
+	status_bar.pack_end (zoom_in_button, false, false);
+	status_bar.pack_end (zoom_label, false, false, 2);
+	status_bar.pack_end (zoom_out_button, false, false);
+	status_bar.pack_end (view_mode_button, false, false, 6);
+	status_bar.set_border_width (2);
+	score_placeholder.pack_start (status_bar, false, false);
+	score_view.StatusChanged.connect (sigc::mem_fun (*this, &MidiEditorPanel::update_status));
+	update_status ();
 
 	/* in the bottom pane the score gets the keys first while it has the focus */
 	score_view.signal_focus_in_event ().connect (sigc::mem_fun (*this, &MidiEditorPanel::score_focus_in), false);
@@ -465,6 +589,14 @@ MidiEditorPanel::handle_key (GdkEventKey* ev)
 		}
 	}
 	return false;
+}
+
+void
+MidiEditorPanel::update_status ()
+{
+	status_label.set_text (score_view.status_text ());
+	zoom_label.set_text (string_compose ("%1%%", score_view.zoom_percent ()));
+	view_mode_button.set_text (score_view.page_view () ? _("Page view") : _("Continuous view"));
 }
 
 bool

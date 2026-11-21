@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include <cairomm/context.h>
@@ -100,6 +101,22 @@ public:
 	/** staff space in pixels (zoom) */
 	void set_staff_space (double);
 	double staff_space () const { return _sp; }
+	/** zoom in percent of the default staff size */
+	int  zoom_percent () const;
+	/** page view (A4 pages) or continuous view (one sheet as long as the music) */
+	void set_page_view (bool);
+	bool page_view () const { return _page_view; }
+	void zoom_step (int dir);
+
+	/** the selection or input position, as in MuseScore's status bar */
+	std::string status_text () const;
+	/** status_text () or the zoom changed */
+	sigc::signal<void> StatusChanged;
+
+	/* note input toolbar */
+	void rest_or_delete ();               ///< note input: rest at the cursor; else delete the selection
+	void accidental (int alter) { set_accidental (alter); }
+	void tie () { add_tie (); }
 
 	/* a grid step (16th note) in ticks */
 	static const int64_t grid = 480;
@@ -157,12 +174,25 @@ private:
 	struct System {
 		size_t first_bar;
 		size_t n_bars;
-		double y;           ///< top of the treble staff
+		size_t page;
+		double y;           ///< top of the system
+		double left;        ///< where the staff lines start
 		double x0;          ///< where the first bar starts
 		double stretch;     ///< justification factor for bar widths
 	};
 	std::vector<System> _systems;
 	int _layout_width;
+
+	/* page view: pages of A4 shape stacked on the score background */
+	double _page_x, _page_w, _page_h, _margin, _title_h;
+	size_t _n_pages;
+	bool   _page_view;
+	double page_gap () const;
+	double page_top (size_t page) const;
+	std::string instrument_name () const;
+
+	std::string _last_status;
+	void emit_status () { StatusChanged (); }
 
 	/* editing */
 	PBD::HistoryOwner* _history;
