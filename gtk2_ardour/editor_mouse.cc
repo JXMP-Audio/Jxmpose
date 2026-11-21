@@ -61,6 +61,7 @@
 #include "actions.h"
 #include "ardour_ui.h"
 #include "editor.h"
+#include "note_editor_window.h"
 #include "time_axis_view.h"
 #include "audio_time_axis.h"
 #include "audio_region_view.h"
@@ -1961,6 +1962,14 @@ Editor::edit_region (RegionView* rv)
 {
 	if (UIConfiguration::instance().get_use_double_click_to_zoom_to_selection()) {
 		temporal_zoom_selection (Both);
+		return;
+	}
+
+	/* audio: the note editor (pitch and timing of the notes); the region editor stays in Region > Properties */
+	if (dynamic_cast<AudioRegionView*> (rv)) {
+		RegionSelection rs;
+		rs.push_back (rv);
+		NoteEditorWindow::open (rs);
 		return;
 	}
 

@@ -87,7 +87,8 @@ Ardour project.
   both tracks are loud (e.g. kick and bass) are marked red.
 
 - **Edit Notes** — per-note editing of a vocal, bass or other single voice
-  (Region › Edit › Edit Notes…). The recording is analysed (pYIN) and every
+  (double-click an audio region, or Region › Edit › Edit Notes…; the region
+  window with its effects is in Region › Edit in separate window…). The recording is analysed (pYIN) and every
   note becomes a blob on a keyboard grid, shaped by its level, with the
   sung pitch curve inside; a thin line continues the curve between the notes
   (slides, scoops, tails). Drag a note up or down for its pitch (whole
