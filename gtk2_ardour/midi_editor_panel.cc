@@ -163,7 +163,7 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 
 	chord_lane_scroller.set_policy (Gtk::POLICY_AUTOMATIC, Gtk::POLICY_NEVER);
 	chord_lane_scroller.add (chord_lane);
-	chord_lane_scroller.set_size_request (-1, 140);
+	chord_lane_scroller.set_size_request (-1, 200);
 
 	pack_start (mode_bar, false, false);
 	pack_start (chord_pads, true, true);

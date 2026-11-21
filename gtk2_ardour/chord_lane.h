@@ -19,6 +19,7 @@
 #pragma once
 
 #include <memory>
+#include <set>
 #include <vector>
 
 #include <ytkmm/drawingarea.h>
@@ -55,7 +56,8 @@ public:
 
 	/** write notes at a position of the region's timeline (ticks from the start of its first bar) */
 	void insert_notes (std::vector<uint8_t> const&, std::string const& name, int64_t tick, int64_t len);
-	/** Delete removes the selected chord, Left/Right select the neighbours */
+	/** Delete removes the selected chords, Left/Right select the neighbours, Ctrl+A/C/X/V/D select all,
+	 *  copy, cut, paste (after the selection, else at the playhead) and duplicate, Escape deselects */
 	bool handle_key (GdkEventKey*);
 
 protected:
@@ -97,7 +99,22 @@ private:
 	double             _ppb;                 ///< pixels per beat
 	int64_t            _playhead;            ///< ticks from _origin, -1 outside
 
-	int     _sel;
+	int                _sel;       ///< the chord clicked or stepped to last (anchor of Shift-click ranges)
+	std::set<int64_t>  _selection; ///< starts of the selected chords
+
+	struct ClipNote {
+		int64_t off, len; ///< from the start of the copied chords
+		uint8_t pitch, velocity, channel;
+	};
+	static std::vector<ClipNote> _clipboard;
+	static int64_t               _clip_span;
+
+	bool    is_sel (int i) const { return i >= 0 && i < (int) _blocks.size () && _selection.count (_blocks[i].start); }
+	void    select_only (int i);
+	void    copy_selection (std::vector<ClipNote>&, int64_t& span) const;
+	void    paste (std::vector<ClipNote> const&, int64_t span, int64_t at, std::string const& what);
+	int64_t selection_end () const;
+	void    select_starting (int64_t from, int64_t to);
 	int     _hover;
 	int     _drag;       ///< 0 none, 1 move, 2 left edge, 3 right edge, 4 ruler
 	int     _drag_block;

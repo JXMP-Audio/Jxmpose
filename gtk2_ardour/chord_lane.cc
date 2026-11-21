@@ -81,6 +81,9 @@ const int64_t chord_slop = Beats::PPQN / 16; /* notes starting this close togeth
 
 } // namespace
 
+std::vector<ChordLane::ClipNote> ChordLane::_clipboard;
+int64_t                          ChordLane::_clip_span = 0;
+
 ChordLane::ChordLane (ChordPads& p)
 	: _pads (p)
 	, _session (0)
@@ -105,7 +108,7 @@ ChordLane::ChordLane (ChordPads& p)
 	add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK
 	            | Gdk::SCROLL_MASK | Gdk::KEY_PRESS_MASK | Gdk::FOCUS_CHANGE_MASK);
 	set_can_focus (true);
-	set_size_request (600, 120);
+	set_size_request (600, 180);
 	std::vector<Gtk::TargetEntry> targets;
 	targets.push_back (Gtk::TargetEntry (ChordPads::drag_target (), Gtk::TARGET_SAME_APP));
 	drag_dest_set (targets, Gtk::DEST_DEFAULT_DROP | Gtk::DEST_DEFAULT_HIGHLIGHT, Gdk::ACTION_COPY);
@@ -123,6 +126,7 @@ ChordLane::set_region (std::shared_ptr<MidiRegion> r)
 	_connections.drop_connections ();
 	_region = r;
 	_sel    = -1;
+	_selection.clear ();
 	if (_region) {
 		std::shared_ptr<MidiModel> m (_region->model ());
 		if (m) {
@@ -201,6 +205,14 @@ ChordLane::rebuild ()
 	if (_sel >= (int) _blocks.size ()) {
 		_sel = -1;
 	}
+	/* chords that are gone are no longer selected */
+	std::set<int64_t> keep;
+	for (auto const& b : _blocks) {
+		if (_selection.count (b.start)) {
+			keep.insert (b.start);
+		}
+	}
+	_selection.swap (keep);
 	queue_resize_width ();
 }
 
@@ -208,7 +220,7 @@ void
 ChordLane::queue_resize_width ()
 {
 	const double w = tick_x (_r_end) + 40;
-	set_size_request ((int) std::max (300.0, w), 120);
+	set_size_request ((int) std::max (300.0, w), 180);
 	queue_draw ();
 }
 
@@ -304,7 +316,7 @@ ChordLane::on_expose_event (GdkEventExpose* ev)
 			}
 		}
 		const double x0 = tick_x (s) + 1, x1 = tick_x (e) - 1;
-		const bool   sel = (int) i == _sel;
+		const bool   sel = is_sel ((int) i);
 		cairo_pattern_t* g = cairo_pattern_create_linear (0, top, 0, top + bh);
 		const uint32_t   c0 = sel ? 0x6b7fa0 : ((int) i == _hover ? 0x585c63 : 0x4d5056);
 		const uint32_t   c1 = sel ? 0x55688a : ((int) i == _hover ? 0x4a4e54 : 0x404348);
@@ -389,7 +401,27 @@ ChordLane::on_button_press_event (GdkEventButton* ev)
 	if (ev->type != GDK_BUTTON_PRESS) {
 		return true;
 	}
-	_sel = b;
+	const bool toggle = ev->state & Gtkmm2ext::Keyboard::PrimaryModifier;
+	const bool range  = (ev->state & GDK_SHIFT_MASK) && _sel >= 0 && _sel < (int) _blocks.size ();
+	if (b < 0) {
+		if (!toggle && !range) {
+			_selection.clear ();
+			_sel = -1;
+		}
+	} else if (toggle) {
+		if (is_sel (b)) {
+			_selection.erase (_blocks[b].start);
+		} else {
+			_selection.insert (_blocks[b].start);
+		}
+		_sel = b;
+	} else if (range) {
+		for (int i = std::min (_sel, b); i <= std::max (_sel, b); ++i) {
+			_selection.insert (_blocks[i].start);
+		}
+	} else {
+		select_only (b);
+	}
 	if (b >= 0) {
 		_drag       = edge < 0 ? 2 : (edge > 0 ? 3 : 1);
 		_drag_block = b;
@@ -506,20 +538,142 @@ ChordLane::handle_key (GdkEventKey* ev)
 	if (ev->time == last_time && ev->keyval == last_key && ev->time != 0) {
 		return true;
 	}
-	if ((ev->keyval == GDK_KEY_Delete || ev->keyval == GDK_KEY_BackSpace) && _sel >= 0) {
-		last_time = ev->time;
-		last_key  = ev->keyval;
+	const guint key  = gdk_keyval_to_lower (ev->keyval);
+	const bool  ctrl = ev->state & Gtkmm2ext::Keyboard::PrimaryModifier;
+	bool        done = true;
+	if ((key == GDK_KEY_Delete || key == GDK_KEY_BackSpace) && !_selection.empty ()) {
 		delete_selected ();
-		return true;
+	} else if ((key == GDK_KEY_Left || key == GDK_KEY_Right) && !_blocks.empty ()) {
+		const int i = _sel < 0 ? (key == GDK_KEY_Left ? (int) _blocks.size () - 1 : 0)
+		                       : std::max (0, std::min ((int) _blocks.size () - 1, _sel + (key == GDK_KEY_Left ? -1 : 1)));
+		select_only (i);
+		_pads.play_notes (_blocks[i].pitches);
+		Glib::signal_timeout ().connect_once ([this] () { _pads.silence (); }, 500);
+	} else if (key == GDK_KEY_Escape && !_selection.empty ()) {
+		_selection.clear ();
+	} else if (ctrl && key == GDK_KEY_a) {
+		for (auto const& b : _blocks) {
+			_selection.insert (b.start);
+		}
+	} else if (ctrl && (key == GDK_KEY_c || key == GDK_KEY_x) && !_selection.empty ()) {
+		copy_selection (_clipboard, _clip_span);
+		if (key == GDK_KEY_x) {
+			delete_selected ();
+		}
+	} else if (ctrl && key == GDK_KEY_v && !_clipboard.empty ()) {
+		int64_t at = selection_end ();
+		if (at < 0) {
+			at = _playhead >= 0 ? snap (_playhead, true) : _r_start;
+		}
+		paste (_clipboard, _clip_span, at, _("paste chords"));
+	} else if (ctrl && key == GDK_KEY_d && !_selection.empty ()) {
+		std::vector<ClipNote> c;
+		int64_t               span;
+		copy_selection (c, span);
+		paste (c, span, selection_end (), _("duplicate chords"));
+	} else {
+		done = false;
 	}
-	if ((ev->keyval == GDK_KEY_Left || ev->keyval == GDK_KEY_Right) && !_blocks.empty ()) {
+	if (done) {
 		last_time = ev->time;
 		last_key  = ev->keyval;
-		_sel = std::max (0, std::min ((int) _blocks.size () - 1, _sel + (ev->keyval == GDK_KEY_Left ? -1 : 1)));
 		queue_draw ();
-		return true;
 	}
-	return false;
+	return done;
+}
+
+void
+ChordLane::select_only (int i)
+{
+	_selection.clear ();
+	if (i >= 0 && i < (int) _blocks.size ()) {
+		_selection.insert (_blocks[i].start);
+	}
+	_sel = i;
+}
+
+void
+ChordLane::select_starting (int64_t from, int64_t to)
+{
+	_selection.clear ();
+	for (size_t i = 0; i < _blocks.size (); ++i) {
+		if (_blocks[i].start >= from - chord_slop && _blocks[i].start < to) {
+			_selection.insert (_blocks[i].start);
+			_sel = (int) i;
+		}
+	}
+}
+
+int64_t
+ChordLane::selection_end () const
+{
+	int64_t e = -1;
+	for (size_t i = 0; i < _blocks.size (); ++i) {
+		if (is_sel ((int) i)) {
+			e = std::max (e, _blocks[i].end);
+		}
+	}
+	return e;
+}
+
+void
+ChordLane::copy_selection (std::vector<ClipNote>& out, int64_t& span) const
+{
+	out.clear ();
+	int64_t from = -1, to = -1;
+	for (size_t i = 0; i < _blocks.size (); ++i) {
+		if (is_sel ((int) i)) {
+			from = from < 0 ? _blocks[i].start : std::min (from, _blocks[i].start);
+			to   = std::max (to, _blocks[i].end);
+		}
+	}
+	span = std::max<int64_t> (0, to - from);
+	for (size_t i = 0; i < _blocks.size (); ++i) {
+		if (!is_sel ((int) i)) {
+			continue;
+		}
+		for (auto const& n : _blocks[i].notes) {
+			ClipNote c;
+			c.off      = note_tick (n) - from;
+			c.len      = n->length ().to_ticks ();
+			c.pitch    = n->note ();
+			c.velocity = n->velocity ();
+			c.channel  = n->channel ();
+			out.push_back (c);
+		}
+	}
+}
+
+void
+ChordLane::paste (std::vector<ClipNote> const& clip, int64_t span, int64_t at, std::string const& what)
+{
+	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
+	if (!model || !_history || clip.empty ()) {
+		return;
+	}
+	at = std::max (_r_start, at);
+	if (at >= _r_end) {
+		return;
+	}
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (what);
+	/* the chords where the pasted ones go are replaced */
+	for (auto const& b : _blocks) {
+		if (b.start >= at && b.start < at + span) {
+			for (auto const& n : b.notes) {
+				cmd->remove (n);
+			}
+		}
+	}
+	for (auto const& c : clip) {
+		const int64_t t = at + c.off;
+		if (t >= _r_end) {
+			continue;
+		}
+		cmd->add (NotePtr (new Evoral::Note<Beats> (c.channel, source_beats (t), Beats::ticks (std::min (c.len, _r_end - t)), c.pitch, c.velocity)));
+	}
+	model->apply_diff_command_as_commit (*_history, cmd);
+	select_starting (at, at + span);
+	queue_draw ();
 }
 
 bool
@@ -563,27 +717,29 @@ ChordLane::apply_drag ()
 	const int64_t keep = b.start + (_drag == 3 ? 0 : _drag_delta);
 	model->apply_diff_command_as_commit (*_history, cmd);
 	/* keep the moved chord selected */
-	for (size_t i = 0; i < _blocks.size (); ++i) {
-		if (std::abs (_blocks[i].start - keep) <= chord_slop) {
-			_sel = (int) i;
-		}
-	}
+	select_starting (keep, keep + 1);
 }
 
 void
 ChordLane::delete_selected ()
 {
 	std::shared_ptr<MidiModel> model (_region ? _region->model () : std::shared_ptr<MidiModel> ());
-	if (!model || !_history || _sel < 0 || _sel >= (int) _blocks.size ()) {
+	if (!model || !_history || _selection.empty ()) {
 		return;
 	}
-	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("delete chord"));
-	for (auto const& n : _blocks[_sel].notes) {
-		cmd->remove (n);
+	MidiModel::NoteDiffCommand* cmd = model->new_note_diff_command (_("delete chords"));
+	int                         first = -1;
+	for (size_t i = 0; i < _blocks.size (); ++i) {
+		if (is_sel ((int) i)) {
+			first = first < 0 ? (int) i : first;
+			for (auto const& n : _blocks[i].notes) {
+				cmd->remove (n);
+			}
+		}
 	}
-	const int keep = _sel;
 	model->apply_diff_command_as_commit (*_history, cmd);
-	_sel = _blocks.empty () ? -1 : std::min (keep, (int) _blocks.size () - 1);
+	/* the next chord gets selected, so Delete can be held */
+	select_only (_blocks.empty () ? -1 : std::min (first, (int) _blocks.size () - 1));
 	queue_draw ();
 }
 
@@ -616,11 +772,7 @@ ChordLane::insert_notes (std::vector<uint8_t> const& p, std::string const& name,
 		cmd->add (NotePtr (new Evoral::Note<Beats> (ch, source_beats (tick), Beats::ticks (len), n, 100)));
 	}
 	model->apply_diff_command_as_commit (*_history, cmd);
-	for (size_t i = 0; i < _blocks.size (); ++i) {
-		if (std::abs (_blocks[i].start - tick) <= chord_slop) {
-			_sel = (int) i;
-		}
-	}
+	select_starting (tick, tick + 1);
 	queue_draw ();
 }
 

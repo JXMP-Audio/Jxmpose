@@ -878,7 +878,7 @@ ChordPads::ChordPads ()
 	for (int i = 0; i < 12; ++i) {
 		_key_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (key_menu_names[i], [this, i] () {
 			_key_root = i;
-			update ();
+			fill_from_key (); /* like Cubase: the pads follow the key */
 		}));
 	}
 	_key_dropdown.set_name ("generic button");
@@ -891,18 +891,18 @@ ChordPads::ChordPads ()
 		}
 		_scale_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_(scales[i].name), [this, i] () {
 			_scale = i;
-			update ();
+			fill_from_key ();
 		}));
 	}
 	_scale_dropdown.set_name ("generic button");
 	_scale_dropdown.set_size_request (130, -1);
-	ArdourWidgets::set_tooltip (_scale_dropdown, _("Scale of the key: Fill Pads builds its chords, the pads show their degree in it"));
+	ArdourWidgets::set_tooltip (_scale_dropdown, _("Scale of the key: picking it puts its chords on the pads, they show their degree in it"));
 	top->pack_start (_scale_dropdown, false, false);
 	_fill_button.set_name ("generic button");
 	_fill_button.set_corner_radius (2);
 	ArdourWidgets::set_tooltip (_fill_button, _("Put the chords of the scale on the pads: a triad on each of its seven degrees, and the seventh chord on the fifth degree"));
 	_fill_button.signal_clicked.connect (sigc::mem_fun (*this, &ChordPads::fill_from_key));
-	top->pack_start (_fill_button, false, false, 4);
+	(void) _fill_button; /* the pads are filled when the key or the scale is picked */
 	_edit_button.set_name ("generic button");
 	_edit_button.set_corner_radius (2);
 	ArdourWidgets::set_tooltip (_edit_button, _("Show the chord editor of the selected pad: root, type, tension, bass, voicing (also: double-click a pad)"));

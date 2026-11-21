@@ -40,7 +40,7 @@ Ardour project.
   pad opens the editor). Pick a key and a scale (major, minor, the modes
   Dorian … Locrian, harmonic and melodic minor, harmonic major, Phrygian
   dominant, Lydian dominant, altered, Hungarian, Neapolitan, double
-  harmonic, Persian, enigmatic) and *Fill Pads* builds its chords (the
+  harmonic, Persian, enigmatic) and the pads fill with its chords (the
   triads and seventh chords of every degree, the tonic as 6 and 6/9), named
   by degree. Hold a pad to hear it on the track's instrument, drag it into
   the notes to write it there (snapped to the grid) or onto another pad, or
@@ -56,7 +56,9 @@ Ardour project.
   voicing, slash chords too). Drop pads or circle chords on it to write
   them (onto a block: replace it), drag a block to move it, its edges to
   change its length (snapped to beats, Shift: sixteenths), Delete removes
-  it, Ctrl+Z undoes, double-click on empty space writes the selected pad,
+  it, Ctrl/Shift-click selects more, Ctrl+A all, Ctrl+C / X / V copy, cut
+  and paste (after the selection, else at the playhead), Ctrl+D duplicates,
+  Ctrl+Z undoes, double-click on empty space writes the selected pad,
   a click on the ruler moves the playhead, Ctrl+wheel zooms.
   In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and
   click notes into the staff; click or drag notes to select and move them,
