@@ -387,10 +387,7 @@ protected:
 
 	bool on_button_press_event (GdkEventButton* ev)
 	{
-		if (ev->button == 1 && ev->type == GDK_2BUTTON_PRESS && pad_at (ev->x, ev->y) >= 0) {
-			_o.show_editor (true);
-			return true;
-		}
+		/* (the chord editor opens only with the Edit Chord button: a double-click popped it up while playing pads) */
 		if (ev->button != 1 || ev->type != GDK_BUTTON_PRESS) {
 			return false;
 		}
@@ -907,7 +904,7 @@ ChordPads::ChordPads ()
 	(void) _fill_button; /* the pads are filled when the key or the scale is picked */
 	_edit_button.set_name ("generic button");
 	_edit_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (_edit_button, _("Show the chord editor of the selected pad: root, type, tension, bass, voicing (also: double-click a pad)"));
+	ArdourWidgets::set_tooltip (_edit_button, _("Show the chord editor of the selected pad: root, type, tension, bass, voicing"));
 	_edit_button.signal_clicked.connect ([this] () { show_editor (!_edit_button.get_active ()); });
 	top->pack_start (_edit_button, false, false, 4);
 	_insert_button.set_name ("generic button");
