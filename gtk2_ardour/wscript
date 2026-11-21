@@ -324,6 +324,7 @@ gtk2_ardour_sources = [
         'startup_fsm.cc',
         'step_editor.cc',
         'step_entry.cc',
+        'stream_link.cc',
         'stereo_panner.cc',
         'stereo_panner_editor.cc',
         'streamview.cc',

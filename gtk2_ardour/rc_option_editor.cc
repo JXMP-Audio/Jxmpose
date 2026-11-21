@@ -4890,6 +4890,18 @@ These settings will only take effect after %1 is restarted.\n\
 				"If the session has a monitor-section, the monitor-bus output is connected to the hardware playback ports, "
 				"otherwise the master-bus output is directly used for playback."));
 
+		bo = new BoolOption (
+					"connect-to-stream",
+					_("Also send Master and the Click to the stream (PipeWire)"),
+					sigc::mem_fun (*_rc_config, &RCConfiguration::get_connect_to_stream),
+					sigc::mem_fun (*_rc_config, &RCConfiguration::set_connect_to_stream)
+					);
+		add_option (_("Signal Flow"), bo);
+		Gtkmm2ext::UI::instance()->set_tip (bo->tip_widget(),
+			string_compose (_("<b>When enabled</b> and %1 runs on JACK of PipeWire, Master and the Click are connected also to the stream capture "
+				"of a screen sharing app (Fluxer) on start and as soon as sharing begins, so the stream hears %1. "
+				"<b>When disabled</b> these connections are removed and not made again."), PROGRAM_NAME));
+
 		ComboOption<AutoConnectOption>* iac = new ComboOption<AutoConnectOption> (
 				"input-auto-connect",
 				_("Connect track inputs"),

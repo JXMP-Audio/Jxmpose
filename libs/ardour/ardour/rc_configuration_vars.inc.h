@@ -200,6 +200,8 @@ CONFIG_VARIABLE (MeterType, meter_type_bus, "meter-type-bus", MeterPeak)
 /* miscellany */
 
 CONFIG_VARIABLE (bool, try_autostart_engine, "try-autostart-engine", true)
+CONFIG_VARIABLE (bool, connect_to_stream, "connect-to-stream", true) /* JXMPOSE: Master + Click also to the PipeWire stream capture */
+CONFIG_VARIABLE (std::string, stream_capture_ports, "stream-capture-ports", "^fluxer-direct-capture")
 CONFIG_VARIABLE (bool, hide_dummy_backend, "hide-dummy-backend", true)
 CONFIG_VARIABLE (bool, replicate_missing_region_channels, "replicate-missing-region-channels", true)
 CONFIG_VARIABLE (bool, hiding_groups_deactivates_groups, "deprecated-hiding-groups-deactivates-groups", false)  /*deprecated*/
