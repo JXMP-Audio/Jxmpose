@@ -159,6 +159,17 @@ Ardour project.
   | JX-LOOP Looper | eight synchronised loop slots: the first recording sets the length, later ones record in sync and overdub; reverse, level, clear per slot (up to 30 s) |
   | JX-SMP Sampler | plays one sample file from MIDI: key range, root note, velocity, ADSR, loop, start offset, voices, probability |
 
+- **ACE plugins in the JXMP look** — the bundled ACE Compressor and
+  Expander (mono and stereo), EQ, Delay, Reverb and Fluid Synth open as
+  JXMP panels too, each in its own colour with *Ardour Community Effects*
+  on the footer. The inline displays of the Compressor, Expander and EQ
+  follow the same guidelines: in the mixer strip a VFD with input level,
+  threshold and gain reduction (or the EQ curve on a small CRT); in the
+  plugin window the transfer curve or frequency response on a CRT with the
+  operating point or band centres, LED level bars and a gain reduction
+  readout. Delay's *NOTE* selector steps through the note values (1/1 …
+  1/32 T); Fluid Synth shows the loaded SoundFont next to *LOAD*.
+
 ## Keyboard shortcuts (added or changed)
 
 | Key | Action |

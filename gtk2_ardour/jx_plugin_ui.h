@@ -35,7 +35,8 @@ namespace ARDOUR {
 
 struct JxLayout;
 
-/** The JXMP hardware panel of a JX plugin (urn:jxmp:...): the plugin's own
+/** The JXMP hardware panel of a JX plugin (urn:jxmp:...) or a bundled ACE
+ * plugin (urn:ardour:a-...): the plugin's own
  * display on top, then sections with knobs, rubber buttons and selectors
  * drawn after the JXMP design guidelines, bound to the plugin's automation
  * controls (drag / wheel, Shift: fine, double-click: default,
@@ -85,11 +86,13 @@ private:
 	void layout ();
 	uint32_t display_max () const;
 	void paint (cairo_t*);
-	void render_display (cairo_t*);
+	bool render_display (cairo_t*);
 	void draw_cell (cairo_t*, Cell const&, bool hover);
 	int  cell_at (double x, double y, int* sub) const;
 	void set_cell_value (Cell&, double internal);
-	void load_sample ();
+	void set_step (Cell&, double value_or_index);
+	std::string loaded_file () const;
+	void load_sample (std::vector<const char*> const& patterns);
 	void redraw ();
 };
 

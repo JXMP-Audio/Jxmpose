@@ -528,88 +528,10 @@ comp_curve (const AComp* self, float xg) {
 
 #include "dynamic_display.c"
 
-static void
-render_inline_full (cairo_t* cr, const AComp* self)
+static float
+jx_curve (const void* self, float xg)
 {
-	const float w = self->w;
-	const float h = self->h;
-
-	const float makeup_thres = self->v_thresdb + self->v_makeup;
-
-	draw_grid (cr, w,h);
-
-	if (self->v_thresdb < 0) {
-		const float x = w * (1.f - (10.f-self->v_thresdb)/70.f) + 0.5;
-		cairo_move_to (cr, x, 0);
-		cairo_line_to (cr, x, h);
-		cairo_stroke (cr);
-	}
-
-	draw_GR_bar (cr, w,h, self->v_gainr);
-
-	// draw state
-	cairo_set_source_rgba (cr, .8, .8, .8, 1.0);
-
-	const float state_x = w * (1.f - (10.f-(*self->inlevel))/70.f);
-	const float state_y = h * ((*self->outlevel) - 10.f) / -70.f;
-
-	cairo_arc (cr, state_x, state_y, 6.f, 0.f, 2.f*M_PI);
-	cairo_fill (cr);
-
-	// draw curve
-	cairo_set_source_rgba (cr, .8, .8, .8, 1.0);
-	cairo_move_to (cr, 0, h);
-
-	for (uint32_t x = 0; x < w; ++x) {
-		// plot -60..+10  dB
-		const float x_db = 70.f * (-1.f + x / (float)w) + 10.f;
-		const float y_db = comp_curve (self, x_db) - 10.f;
-		const float y = h * (y_db / -70.f);
-		cairo_line_to (cr, x, y);
-	}
-	cairo_stroke_preserve (cr);
-
-	cairo_line_to (cr, w, h);
-	cairo_close_path (cr);
-	cairo_clip (cr);
-
-	// draw signal level & reduction/gradient
-	const float top = comp_curve (self, 0) - 10.f;
-	cairo_pattern_t* pat = cairo_pattern_create_linear (0.0, 0.0, 0.0, h);
-	if (top > makeup_thres - 10.f) {
-		cairo_pattern_add_color_stop_rgba (pat, 0.0, 0.8, 0.1, 0.1, 0.5);
-		cairo_pattern_add_color_stop_rgba (pat, top / -70.f, 0.8, 0.1, 0.1, 0.5);
-	}
-	if (self->v_knee > 0) {
-		cairo_pattern_add_color_stop_rgba (pat, ((makeup_thres -10.f) / -70.f), 0.7, 0.7, 0.2, 0.5);
-		cairo_pattern_add_color_stop_rgba (pat, ((makeup_thres - self->v_knee - 10.f) / -70.f), 0.5, 0.5, 0.5, 0.5);
-	} else {
-		cairo_pattern_add_color_stop_rgba (pat, ((makeup_thres - 10.f)/ -70.f), 0.7, 0.7, 0.2, 0.5);
-		cairo_pattern_add_color_stop_rgba (pat, ((makeup_thres - 10.01f) / -70.f), 0.5, 0.5, 0.5, 0.5);
-	}
-	cairo_pattern_add_color_stop_rgba (pat, 1.0, 0.5, 0.5, 0.5, 0.5);
-
-	// maybe cut off at x-position?
-	const float x = w * (self->v_lvl_in + 60) / 70.f;
-	const float y = x + h*self->v_makeup;
-	cairo_rectangle (cr, 0, h - y, x, y);
-	if (self->v_ratio > 1.0) {
-		cairo_set_source (cr, pat);
-	} else {
-		cairo_set_source_rgba (cr, 0.5, 0.5, 0.5, 0.5);
-	}
-	cairo_fill (cr);
-
-	cairo_pattern_destroy (pat); // TODO cache pattern
-}
-
-static void
-render_inline_only_bars (cairo_t* cr, const AComp* self)
-{
-	draw_inline_bars (cr, self->w, self->h,
-			  self->v_thresdb, self->v_ratio,
-			  self->v_peakdb, self->v_gainr,
-			  self->v_lvl_in, self->v_lvl_out);
+	return comp_curve ((const AComp*)self, xg);
 }
 
 static LV2_Inline_Display_Image_Surface *
@@ -617,10 +539,7 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 {
 	AComp* self = (AComp*)instance;
 
-	uint32_t h = MIN (w, max_h);
-	if (w < 200) {
-		h = 40;
-	}
+	const uint32_t h = jx_dyn_height (w, max_h);
 
 	if (!self->display || self->w != w || self->h != h) {
 		if (self->display) cairo_surface_destroy(self->display);
@@ -631,11 +550,13 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 
 	cairo_t* cr = cairo_create (self->display);
 
-	if (w >= 200) {
-		render_inline_full (cr, self);
-	} else {
-		render_inline_only_bars (cr, self);
-	}
+	/* JXMP look (shared/dynamic_display.c) */
+	const JxDynState st = {
+		0xD8443A, "ACE COMP", "COMPRESSOR",
+		self->v_thresdb, self->v_gainr, 24.f,
+		self->v_lvl_in, self->v_lvl_out
+	};
+	jx_dyn_render (cr, w, h, &st, self, jx_curve);
 
 	cairo_destroy (cr);
 

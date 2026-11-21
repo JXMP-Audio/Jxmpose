@@ -20,6 +20,8 @@
 #include <cmath>
 #include <cstring>
 
+#include <glibmm/miscutils.h>
+
 #include <ytkmm/filechooserdialog.h>
 #include <ytkmm/stock.h>
 
@@ -64,6 +66,9 @@ struct JxItem {
 	JxKind                   kind;
 	JxCap                    cap;
 	uint32_t                 lit; /* button colour, 0: the product colour */
+	/* K_CHOICE: the button legends; K_STEP: readout labels for the values
+	 * (an enumeration: in the order of its scale points); K_LOAD: file
+	 * patterns, then the loaded file is shown in a VFD next to the button */
 	std::vector<const char*> choices;
 };
 
@@ -79,6 +84,10 @@ struct JxLayout {
 	uint32_t           product;
 	std::vector<JxRow> rows;
 	int                display_max; /* height of the plugin's display, 0: 220 px */
+	/* plugins without an inline display: the panel draws the title band */
+	const char* title;
+	const char* subtitle;
+	const char* brand; /* footer, 0: JXMP AUDIO */
 };
 
 #define C_REC  0xE83A30
@@ -125,6 +134,32 @@ static JxItem
 choice (const char* sym, const char* legend, std::vector<const char*> c)
 {
 	return JxItem { sym, legend, K_CHOICE, C_BLACK, 0, c };
+}
+
+static JxItem
+step_labels (const char* sym, const char* legend, std::vector<const char*> labels, JxCap cap = C_BLACK)
+{
+	return JxItem { sym, legend, K_STEP, cap, 0, labels };
+}
+
+static JxItem
+load_file (const char* legend, std::vector<const char*> patterns)
+{
+	return JxItem { "", legend, K_LOAD, C_BLACK, 0, patterns };
+}
+
+#define ACE_BRAND "A R D O U R   C O M M U N I T Y   E F F E C T S"
+
+/* the ACE dynamics (mono and stereo share the ports) */
+static JxLayout
+ace_dynamics (const char* uri, uint32_t product)
+{
+	JxLayout m { uri, product, {}, 220, 0, 0, ACE_BRAND };
+	m.rows.push_back ({ { "DYNAMICS", { main_knob ("thr", "THRESHOLD"), knob ("rat", "RATIO"), knob ("kn", "KNEE") } },
+	                    { "TIME", { knob ("att", "ATTACK"), knob ("rel", "RELEASE") } },
+	                    { "OUTPUT", { knob ("mak", "MAKEUP") } },
+	                    { "SIDECHAIN", { button ("sidech", "EXT") } } });
+	return m;
 }
 
 static std::vector<JxLayout> const&
@@ -237,6 +272,62 @@ layouts ()
 		                                small ("probability", "CHANCE", C_GREY), step ("channel", "MIDI CH") } } });
 		l.push_back (m);
 	}
+
+	/* ---- the bundled ACE plugins (Ardour Community Effects) ---- */
+
+	l.push_back (ace_dynamics ("urn:ardour:a-comp", 0xD8443A));
+	l.push_back (ace_dynamics ("urn:ardour:a-comp#stereo", 0xD8443A));
+	l.push_back (ace_dynamics ("urn:ardour:a-exp", 0x2FB8C4));
+	l.push_back (ace_dynamics ("urn:ardour:a-exp#stereo", 0x2FB8C4));
+
+	{ /* ACE EQ */
+		JxLayout m { "urn:ardour:a-eq", 0xF2C230, {}, 220, 0, 0, ACE_BRAND };
+		static char syms[4][3][8];
+		for (int b = 0; b < 4; ++b) {
+			snprintf (syms[b][0], sizeof (syms[b][0]), "filtog%d", b + 1);
+			snprintf (syms[b][1], sizeof (syms[b][1]), "freq%d", b + 1);
+			snprintf (syms[b][2], sizeof (syms[b][2]), "bw%d", b + 1);
+		}
+		static char gain[4][4];
+		for (int b = 0; b < 4; ++b) {
+			snprintf (gain[b], sizeof (gain[b]), "g%d", b + 1);
+		}
+		std::vector<JxSection> bands;
+		for (int b = 0; b < 4; ++b) {
+			bands.push_back ({ string ("BAND ") + std::to_string (b + 1),
+			                   { button (syms[b][0], "ON", C_PLAY), knob (syms[b][1], "FREQ"), knob (gain[b], "GAIN"), small (syms[b][2], "BW", C_GREY) } });
+		}
+		m.rows.push_back ({ { "LOW SHELF", { button ("filtogl", "ON", C_PLAY), knob ("freql", "FREQ"), knob ("gl", "GAIN") } }, bands[0], bands[1] });
+		m.rows.push_back ({ bands[2], bands[3],
+		                    { "HIGH SHELF", { button ("filtogh", "ON", C_PLAY), knob ("freqh", "FREQ"), knob ("gh", "GAIN") } },
+		                    { "OUTPUT", { main_knob ("master", "MASTER") } } });
+		l.push_back (m);
+	}
+	{ /* ACE Delay */
+		JxLayout m { "urn:ardour:a-delay", 0x4AC0A0, {}, 0, "ACE DELAY", "TEMPO DELAY", ACE_BRAND };
+		m.rows.push_back ({ { "TIME", { main_knob ("time", "TIME"), button ("sync", "SYNC"),
+		                                step_labels ("div", "NOTE", { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/4 T", "1/8 T", "1/16 T", "1/32 T" }),
+		                                button ("dot", "DOT") } },
+		                    { "FEEDBACK", { knob ("feedback", "FEEDBACK"), knob ("lpf", "LPF"), button ("inv", "INVERT") } },
+		                    { "OUTPUT", { knob ("drywet", "DRY · WET"), knob ("gain", "GAIN") } } });
+		l.push_back (m);
+	}
+	{ /* ACE Reverb */
+		JxLayout m { "urn:ardour:a-reverb", 0x8FC8F0, {}, 0, "ACE REVERB", "ROOM REVERB", ACE_BRAND };
+		m.rows.push_back ({ { "REVERB", { main_knob ("roomsz", "ROOM SIZE"), knob ("blend", "BLEND") } } });
+		l.push_back (m);
+	}
+	{ /* ACE Fluid Synth */
+		JxLayout m { "urn:ardour:a-fluidsynth", 0x5B6EE1, {}, 0, "ACE FLUID SYNTH", "SF2 PLAYER", ACE_BRAND };
+		m.rows.push_back ({ { "SOUNDFONT", { load_file ("LOAD", { "*.sf2", "*.SF2", "*.sf3", "*.SF3" }) } },
+		                    { "OUTPUT", { main_knob ("level", "LEVEL") } } });
+		m.rows.push_back ({ { "REVERB", { button ("rev_enable", "ON", C_PLAY), knob ("rev_roomsize", "ROOM"), knob ("rev_damp", "DAMPING"),
+		                                  knob ("rev_width", "WIDTH"), knob ("rev_level", "WET") } } });
+		m.rows.push_back ({ { "CHORUS", { button ("chorus_enable", "ON", C_PLAY), step ("chorus_nr", "VOICES"), knob ("chorus_speed", "SPEED"),
+		                                  knob ("chorus_depth", "DEPTH"), knob ("chorus_level", "LEVEL"),
+		                                  choice ("chorus_type", "WAVE", { "SINE", "TRI" }) } } });
+		l.push_back (m);
+	}
 	return l;
 }
 
@@ -285,6 +376,7 @@ cell_width (JxItem const& it)
 		case K_SMALL: return 52;
 		case K_STEP: return 66;
 		case K_CHOICE: return std::max (60.0, it.choices.size () * 42.0 + 4);
+		case K_LOAD: return it.choices.empty () ? 56 : 220; /* with the file name */
 		default: return 56;
 	}
 }
@@ -330,6 +422,7 @@ JxPanel::JxPanel (std::shared_ptr<PluginInsert> pi, JxLayout const& l)
 		}
 	}
 	pi->plugin ()->QueueDraw.connect (_connections, invalidator (*this), std::bind (&JxPanel::redraw, this), gui_context ());
+	pi->plugin ()->PropertyChanged.connect (_connections, invalidator (*this), std::bind (&JxPanel::redraw, this), gui_context ());
 	layout ();
 }
 
@@ -417,7 +510,7 @@ JxPanel::layout ()
 					case K_LOAD:
 						c.bw = 46;
 						c.bh = 24;
-						c.bx = c.cx - c.bw * 0.5;
+						c.bx = (it.kind == K_LOAD && !it.choices.empty ()) ? c.x + 4 : c.cx - c.bw * 0.5;
 						c.by = c.cy - c.bh * 0.5;
 						break;
 					default:
@@ -441,12 +534,12 @@ JxPanel::on_size_request (Gtk::Requisition* req)
 	req->height = _height;
 }
 
-void
+bool
 JxPanel::render_display (cairo_t* cr)
 {
 	Plugin::Display_Image_Surface* dis = _pi->plugin ()->render_inline_display (_width, display_max ());
 	if (!dis) {
-		return;
+		return false;
 	}
 	if (!_display || dis->width != cairo_image_surface_get_width (_display) || dis->height != cairo_image_surface_get_height (_display)) {
 		if (_display) {
@@ -464,6 +557,7 @@ JxPanel::render_display (cairo_t* cr)
 	cairo_surface_mark_dirty (_display);
 	cairo_set_source_surface (cr, _display, 0, 0);
 	cairo_paint (cr);
+	return true;
 }
 
 /* ---- drawing ---- */
@@ -565,6 +659,57 @@ draw_knob (cairo_t* cr, double cx, double cy, double r, uint32_t cap, double pos
 	cairo_set_line_cap (cr, CAIRO_LINE_CAP_BUTT);
 }
 
+/* the values of an enumeration with gaps (e.g. the note values 1, 2, 4, 8,
+ * 16, 32, 6, 12, 24, 48 of ACE Delay) in the order of its scale points: the
+ * labels sort the points ("a - Whole note", "b - Half note", ...). Empty
+ * when the parameter is not an enumeration or its values are the integers
+ * lower .. upper, which simply step one by one. */
+static std::vector<float>
+enum_values (std::shared_ptr<AutomationControl> ac)
+{
+	std::vector<float>         v;
+	ParameterDescriptor const& d = ac->desc ();
+	if (!d.enumeration || !d.scale_points || d.scale_points->empty ()) {
+		return v;
+	}
+	bool contiguous = d.scale_points->size () == (size_t)rint (d.upper - d.lower) + 1;
+	for (auto const& sp : *d.scale_points) {
+		v.push_back (sp.second);
+		if (sp.second != rint (sp.second)) {
+			contiguous = false;
+		}
+	}
+	if (contiguous) {
+		v.clear ();
+	}
+	return v;
+}
+
+static int
+enum_index (std::vector<float> const& v, double x)
+{
+	int    best = 0;
+	double dist = HUGE_VAL;
+	for (size_t i = 0; i < v.size (); ++i) {
+		if (fabs (v[i] - x) < dist) {
+			dist = fabs (v[i] - x);
+			best = i;
+		}
+	}
+	return best;
+}
+
+/* position of a stepped selector: the value's step (or index in an enumeration) */
+static double
+step_position (std::shared_ptr<AutomationControl> ac)
+{
+	std::vector<float> const v = enum_values (ac);
+	if (v.size () > 1) {
+		return enum_index (v, ac->get_value ()) / (double)(v.size () - 1);
+	}
+	return ac->internal_to_interface (ac->get_value ());
+}
+
 /* scale printed around a knob, in the parameter's own units */
 static void
 draw_scale (cairo_t* cr, double cx, double cy, double r, std::shared_ptr<AutomationControl> ac, bool stepped, bool labels)
@@ -572,7 +717,8 @@ draw_scale (cairo_t* cr, double cx, double cy, double r, std::shared_ptr<Automat
 	ParameterDescriptor const& d     = ac->desc ();
 	int                        steps = 0;
 	if (stepped) {
-		steps = (int)rint (d.upper - d.lower);
+		const size_t ne = enum_values (ac).size ();
+		steps           = ne > 1 ? (int)ne - 1 : (int)rint (d.upper - d.lower);
 		if (steps > 24) {
 			steps = 0;
 		}
@@ -611,9 +757,16 @@ draw_scale (cairo_t* cr, double cx, double cy, double r, std::shared_ptr<Automat
 }
 
 static string
-value_string (std::shared_ptr<AutomationControl> ac)
+value_string (std::shared_ptr<AutomationControl> ac, std::vector<const char*> const& labels = std::vector<const char*> ())
 {
 	ParameterDescriptor const& d = ac->desc ();
+	if (!labels.empty ()) {
+		std::vector<float> const v   = enum_values (ac);
+		const size_t             idx = v.empty () ? (size_t)std::max (0.0, rint (ac->get_value () - d.lower)) : (size_t)enum_index (v, ac->get_value ());
+		if (idx < labels.size ()) {
+			return labels[idx];
+		}
+	}
 	if (d.scale_points) {
 		const double v = ac->get_value ();
 		for (auto const& sp : *d.scale_points) {
@@ -670,6 +823,21 @@ JxPanel::draw_cell (cairo_t* cr, Cell const& c, bool hover)
 
 	if (it.kind == K_LOAD) {
 		jx_tag (cr, c.bx, c.by, c.bw, c.bh, _layout.product, false, it.legend);
+		if (!it.choices.empty ()) {
+			/* the loaded file in a VFD next to the button */
+			string name = loaded_file ();
+			name        = name.empty () ? string ("NO FILE") : Glib::path_get_basename (name);
+			std::transform (name.begin (), name.end (), name.begin (), ::toupper);
+			const JxRGB  lit = jx_vfd_tint (_layout.product);
+			const double vx  = c.bx + c.bw + 8, vw = c.x + c.w - 4 - vx;
+			jx_vfd_window (cr, vx, c.by - 1, vw, c.bh + 2, lit);
+			cairo_save (cr);
+			cairo_rectangle (cr, vx + 3, c.by, vw - 6, c.bh);
+			cairo_clip (cr);
+			jx_vfd_text (cr, vx + 6, c.by + c.bh * 0.5 + 3.5, -1, 9, lit, !loaded_file ().empty (), name.c_str ());
+			cairo_restore (cr);
+			jx_vfd_glare (cr, vx, c.by - 1, vw, c.bh + 2);
+		}
 		return;
 	}
 	if (!c.ac) {
@@ -715,10 +883,10 @@ JxPanel::draw_cell (cairo_t* cr, Cell const& c, bool hover)
 	jx_set (cr, JX_LEGEND, 1);
 	jx_text (cr, c.cx, ly, 0, it.legend);
 	draw_scale (cr, c.cx, c.cy, c.r, c.ac, stepped, it.kind != K_SMALL);
-	draw_knob (cr, c.cx, c.cy, c.r, cap_color (it.cap, _layout.product), c.ac->internal_to_interface (v));
+	draw_knob (cr, c.cx, c.cy, c.r, cap_color (it.cap, _layout.product), stepped ? step_position (c.ac) : c.ac->internal_to_interface (v));
 
 	/* value: a small VFD readout on selectors, print on knobs */
-	const string vs = value_string (c.ac);
+	const string vs = value_string (c.ac, stepped ? it.choices : std::vector<const char*> ());
 	const double vy = c.cy + c.r + 24;
 	if (stepped) {
 		const JxRGB lit = jx_vfd_tint (_layout.product);
@@ -748,7 +916,14 @@ JxPanel::paint (cairo_t* cr)
 {
 	jx_set (cr, JX_PANEL, 1);
 	cairo_paint (cr);
-	render_display (cr);
+	if (!render_display (cr) && _layout.title) {
+		/* no display of its own: the title band and the double stripe */
+		cairo_save (cr);
+		cairo_rectangle (cr, 0, 0, _width, _display_h);
+		cairo_clip (cr);
+		jx_panel (cr, _width, JX_FULL_H, _layout.product, _layout.title, _layout.subtitle);
+		cairo_restore (cr);
+	}
 
 	for (auto const& t : _titles) {
 		jx_section (cr, t.x, t.y, t.w, _layout.product, t.text.c_str ());
@@ -764,7 +939,7 @@ JxPanel::paint (cairo_t* cr)
 	cairo_fill (cr);
 	jx_font (cr, JX_FONT_LABEL, 8.5);
 	jx_set (cr, JX_LEGEND_DIM, 1);
-	jx_text (cr, _width * 0.5, by + 13.5, 0, "J X M P   A U D I O");
+	jx_text (cr, _width * 0.5, by + 13.5, 0, _layout.brand ? _layout.brand : "J X M P   A U D I O");
 	for (double sx : { 9.0, _width - 9.0 }) {
 		cairo_arc (cr, sx, by + 10, 3.2, 0, 2 * M_PI);
 		jx_set (cr, 0x0C0C0E, 1);
@@ -811,6 +986,35 @@ JxPanel::cell_at (double x, double y, int* sub) const
 	return -1;
 }
 
+/* a stepped selector: v is the value, or for an enumeration the index of its scale point */
+void
+JxPanel::set_step (Cell& c, double v)
+{
+	if (!c.ac) {
+		return;
+	}
+	std::vector<float> const e = enum_values (c.ac);
+	if (e.empty ()) {
+		set_cell_value (c, v);
+		return;
+	}
+	const int idx = std::max (0, std::min ((int)e.size () - 1, (int)rint (v)));
+	set_cell_value (c, e[idx]);
+}
+
+string
+JxPanel::loaded_file () const
+{
+	std::shared_ptr<Plugin> p = _pi->plugin ();
+	for (auto const& d : p->get_supported_properties ()) {
+		if (d.second.datatype == Variant::PATH) {
+			Variant const v = p->get_property_value (d.first);
+			return v.type () == Variant::PATH ? v.get_path () : string ();
+		}
+	}
+	return string ();
+}
+
 void
 JxPanel::set_cell_value (Cell& c, double v)
 {
@@ -834,7 +1038,7 @@ JxPanel::on_button_press_event (GdkEventButton* ev)
 
 	if (c.item->kind == K_LOAD) {
 		if (ev->button == 1 && ev->type == GDK_BUTTON_PRESS) {
-			load_sample ();
+			load_sample (c.item->choices);
 		}
 		return true;
 	}
@@ -871,9 +1075,14 @@ JxPanel::on_button_press_event (GdkEventButton* ev)
 		set_cell_value (c, c.ac->desc ().normal);
 		return true;
 	}
-	_drag       = i;
-	_drag_y     = ev->y;
-	_drag_start = c.item->kind == K_STEP ? c.ac->get_value () : c.ac->get_interface ();
+	_drag   = i;
+	_drag_y = ev->y;
+	if (c.item->kind == K_STEP) {
+		std::vector<float> const ev_ = enum_values (c.ac);
+		_drag_start                  = ev_.empty () ? c.ac->get_value () : enum_index (ev_, c.ac->get_value ());
+	} else {
+		_drag_start = c.ac->get_interface ();
+	}
 	c.ac->start_touch (timepos_t (c.ac->session ().transport_sample ()));
 	return true;
 }
@@ -906,7 +1115,7 @@ JxPanel::on_motion_notify_event (GdkEventMotion* ev)
 		const double dy   = _drag_y - ev->y;
 		const bool   fine = ev->state & GDK_SHIFT_MASK;
 		if (c.item->kind == K_STEP) {
-			set_cell_value (c, rint (_drag_start + dy / (fine ? 24.0 : 10.0)));
+			set_step (c, rint (_drag_start + dy / (fine ? 24.0 : 10.0)));
 		} else {
 			const double f = std::max (0.0, std::min (1.0, _drag_start + dy / (fine ? 900.0 : 180.0)));
 			c.ac->set_interface (f, false, PBD::Controllable::NoGroup);
@@ -949,7 +1158,10 @@ JxPanel::on_scroll_event (GdkEventScroll* ev)
 		dir = -1;
 	}
 	switch (c.item->kind) {
-		case K_STEP:
+		case K_STEP: {
+			std::vector<float> const v = enum_values (c.ac);
+			set_step (c, (v.empty () ? rint (c.ac->get_value ()) : enum_index (v, c.ac->get_value ())) + dir);
+		} break;
 		case K_CHOICE:
 			set_cell_value (c, rint (c.ac->get_value ()) + dir);
 			break;
@@ -966,7 +1178,7 @@ JxPanel::on_scroll_event (GdkEventScroll* ev)
 }
 
 void
-JxPanel::load_sample ()
+JxPanel::load_sample (std::vector<const char*> const& patterns)
 {
 	std::shared_ptr<Plugin>           p     = _pi->plugin ();
 	Plugin::PropertyDescriptors const& descs = p->get_supported_properties ();
@@ -974,15 +1186,26 @@ JxPanel::load_sample ()
 		if (d.second.datatype != Variant::PATH) {
 			continue;
 		}
-		Gtk::FileChooserDialog dialog (_("Load Sample"), Gtk::FILE_CHOOSER_ACTION_OPEN);
+		Gtk::FileChooserDialog dialog (patterns.empty () ? _("Load Sample") : _("Load File"), Gtk::FILE_CHOOSER_ACTION_OPEN);
 		dialog.add_button (Gtk::Stock::CANCEL, Gtk::RESPONSE_CANCEL);
 		dialog.add_button (Gtk::Stock::OPEN, Gtk::RESPONSE_OK);
-		Gtk::FileFilter audio;
-		audio.set_name (_("Audio Files"));
-		for (const char* ext : { "*.wav", "*.WAV", "*.flac", "*.FLAC", "*.aif", "*.aiff", "*.ogg", "*.caf", "*.w64" }) {
-			audio.add_pattern (ext);
+		Gtk::FileFilter files;
+		if (patterns.empty ()) {
+			files.set_name (_("Audio Files"));
+			for (const char* ext : { "*.wav", "*.WAV", "*.flac", "*.FLAC", "*.aif", "*.aiff", "*.ogg", "*.caf", "*.w64" }) {
+				files.add_pattern (ext);
+			}
+		} else {
+			files.set_name (d.second.label);
+			for (const char* ext : patterns) {
+				files.add_pattern (ext);
+			}
 		}
-		dialog.add_filter (audio);
+		dialog.add_filter (files);
+		string const cur = loaded_file ();
+		if (!cur.empty ()) {
+			dialog.set_filename (cur);
+		}
 		Gtk::Window* top = dynamic_cast<Gtk::Window*> (get_toplevel ());
 		if (top) {
 			dialog.set_transient_for (*top);

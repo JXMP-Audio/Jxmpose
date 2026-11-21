@@ -55,6 +55,7 @@ typedef std::complex<double> _dcomplex;
 #ifdef LV2_EXTENDED
 #include <cairo/cairo.h>
 #include "ardour/lv2_extensions.h"
+#include "../jxmp.lv2/jxmp_draw.h"
 #endif
 
 #define AEQ_URI	"urn:ardour:a-eq"
@@ -145,6 +146,7 @@ typedef struct {
 	float v_bw[BANDS];
 	float v_f0[BANDS];
 	float v_master;
+	bool  v_on[BANDS]; /* band switched on, for the display */
 
 	bool need_expose;
 
@@ -396,6 +398,14 @@ run(LV2_Handle instance, uint32_t n_samples)
 
 	const float target_gain = *aeq->enable <= 0 ? 0 : *aeq->master; // dB
 
+	for (int i = 0; i < BANDS; ++i) {
+		const bool on = *aeq->filtog[i] > 0 && *aeq->enable > 0;
+		if (on != aeq->v_on[i]) {
+			aeq->v_on[i]     = on;
+			aeq->need_expose = true;
+		}
+	}
+
 	while (n_samples > 0) {
 		uint32_t block = n_samples;
 		bool any_changed = false;
@@ -550,11 +560,16 @@ eq_curve (Aeq* self, float f) {
 	return (float)response;
 }
 
+/* the display after the JXMP design guidelines (see jxmp_draw.h): the
+ * response as a phosphor trace on a CRT, the band centres marked */
+#define AEQ_PRODUCT 0xF2C230
+
 static LV2_Inline_Display_Image_Surface *
 render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 {
 	Aeq* self = (Aeq*)instance;
-	uint32_t h = MIN (1 | (uint32_t)ceilf (w * 9.f / 16.f), max_h);
+	const uint32_t compact_h = MIN (1 | (uint32_t)ceilf (w * 9.f / 16.f), 60);
+	const uint32_t h = jx_display_height (w, max_h, compact_h, 0.42);
 
 	if (!self->display || self->w != w || self->h != h) {
 		if (self->display) cairo_surface_destroy(self->display);
@@ -564,57 +579,92 @@ render_inline (LV2_Handle instance, uint32_t w, uint32_t max_h)
 	}
 
 	cairo_t* cr = cairo_create (self->display);
+	const bool full = h >= JX_FULL_H;
 
-	// clear background
-	cairo_rectangle (cr, 0, 0, w, h);
-	cairo_set_source_rgba (cr, .2, .2, .2, 1.0);
-	cairo_fill (cr);
+	const double y0 = jx_panel (cr, w, h, AEQ_PRODUCT, "ACE EQ", "PARAMETRIC EQUALIZER");
 
-	cairo_set_line_width(cr, 1.0);
+	double gx, gy, gw, gh;
+	if (full) {
+		jx_section (cr, 8, y0 + 4, w - 16, AEQ_PRODUCT, "RESPONSE");
+		gx = 30;
+		gy = y0 + 12;
+		gw = w - 40;
+		gh = h - gy - 16;
+	} else {
+		gx = 2;
+		gy = y0;
+		gw = w - 4;
+		gh = h - y0 - 2;
+	}
+	jx_crt (cr, gx, gy, gw, gh, 1, 1);
 
-	// prepare grid drawing
+	/* the plot inside the bezel: 20 Hz .. 20 kHz, -20 .. +20 dB */
+	const double px = gx + 2, py = gy + 2, pw = gw - 4, ph = gh - 4;
+#define EQ_Y(db) (py + ph * (0.5 - (db) / 40.0))
+
 	cairo_save (cr);
-	const double dash2[] = {1, 3};
-	//cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-	cairo_set_dash(cr, dash2, 2, 2);
-	cairo_set_source_rgba (cr, 0.5, 0.5, 0.5, 0.5);
+	cairo_rectangle (cr, px, py, pw, ph);
+	cairo_clip (cr);
 
-	// draw x-grid 6dB steps
-	for (int32_t d = -18; d <= 18; d+=6) {
-		float y = (float)h * (d / 40.0 + 0.5);
-		y = rint (y) - .5;
-		cairo_move_to (cr, 0, y);
-		cairo_line_to (cr, w, y);
+	/* division lines: 6 dB, frequency decades (and 2, 5 in the full view) */
+	cairo_set_line_width (cr, 0.5);
+	for (int32_t d = -18; d <= 18; d += 6) {
+		cairo_set_source_rgba (cr, 0.49, 1.0, 0.66, d == 0 ? 0.18 : 0.08);
+		cairo_move_to (cr, px, rint (EQ_Y (d)) + 0.5);
+		cairo_line_to (cr, px + pw, rint (EQ_Y (d)) + 0.5);
 		cairo_stroke (cr);
 	}
-	// draw y-axis grid 100, 1k, 10K
-	for (int32_t f = 100; f <= 10000; f *= 10) {
-		float x = w * log10 (f / 20.0) / log10 (1000.0);
-		x = rint (x) - .5;
-		cairo_move_to (cr, x, 0);
-		cairo_line_to (cr, x, h);
-		cairo_stroke (cr);
+	cairo_set_source_rgba (cr, 0.49, 1.0, 0.66, 0.08);
+	static const float fl[] = { 50, 100, 200, 500, 1000, 2000, 5000, 10000 };
+	for (int i = 0; i < 8; ++i) {
+		if (!full && fl[i] != 100 && fl[i] != 1000 && fl[i] != 10000) {
+			continue;
+		}
+		const double x = rint (jx_freq_x (fl[i], px, pw)) + 0.5;
+		cairo_move_to (cr, x, py);
+		cairo_line_to (cr, x, py + ph);
 	}
+	cairo_stroke (cr);
 
+	/* response */
+	for (uint32_t x = 0; x <= (uint32_t)pw; ++x) {
+		const float x_hz = 20.f * powf (1000.f, (float)x / (float)pw);
+		const float y_db = to_dB (eq_curve (self, x_hz)) + self->v_master;
+		if (x == 0) {
+			cairo_move_to (cr, px + x, EQ_Y (y_db));
+		} else {
+			cairo_line_to (cr, px + x, EQ_Y (y_db));
+		}
+	}
+	jx_trace (cr, JX_TRACE_CH1, !full);
+
+	/* band centres on the curve */
+	if (full) {
+		static const char* const names[BANDS] = { "L", "1", "2", "3", "4", "H" };
+		for (int i = 0; i < BANDS; ++i) {
+			if (!self->v_on[i]) {
+				continue;
+			}
+			const double fx = jx_freq_x (self->v_f0[i], px, pw);
+			const double fy = EQ_Y (to_dB (eq_curve (self, self->v_f0[i])) + self->v_master);
+			jx_led (cr, fx, fy, 2.4, JX_TRACE_CH2, 1);
+			jx_font (cr, JX_FONT_LABEL, 7);
+			jx_set (cr, JX_TRACE_CH2, 0.9);
+			jx_text (cr, fx, fy < py + 14 ? fy + 12 : fy - 6, 0, names[i]);
+		}
+	}
 	cairo_restore (cr);
 
-
-	// draw curve
-	cairo_set_source_rgba (cr, .8, .8, .8, 1.0);
-	cairo_move_to (cr, 0, h);
-
-	for (uint32_t x = 0; x < w; ++x) {
-		// plot 20..20kHz +-20dB
-		const float x_hz = 20.f * powf (1000.f, (float)x / (float)w);
-		const float y_db = to_dB(eq_curve(self, x_hz)) + self->v_master;
-		const float y = (float)h * (-y_db / 40.0 + 0.5);
-		cairo_line_to (cr, x, y);
+	if (full) {
+		/* printed scales */
+		jx_freq_scale (cr, px, gy + gh + 10, pw);
+		jx_font (cr, JX_FONT_NUMBER, 7);
+		jx_set (cr, JX_LEGEND_DIM, 1);
+		jx_text (cr, gx - 4, EQ_Y (12) + 2.5, 1, "+12");
+		jx_text (cr, gx - 4, EQ_Y (0) + 2.5, 1, "0");
+		jx_text (cr, gx - 4, EQ_Y (-12) + 2.5, 1, "−12");
 	}
-	cairo_stroke_preserve (cr);
-
-	cairo_line_to (cr, w, h);
-	cairo_close_path (cr);
-	cairo_clip (cr);
+#undef EQ_Y
 
 	// create RGBA surface
 	cairo_destroy (cr);
