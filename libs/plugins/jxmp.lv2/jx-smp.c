@@ -130,7 +130,10 @@ load_sample (const char* path)
 	if (!sf) {
 		return NULL;
 	}
-	if (info.frames <= 0 || info.channels <= 0 || info.frames > (sf_count_t)info.samplerate * 600) {
+	/* sane sample rate and length (max 10 min at 768 kHz), checked in 64 bit before narrowing to uint32_t */
+	if (info.frames <= 0 || info.channels <= 0 || info.channels > 64
+	    || info.samplerate < 1000 || info.samplerate > 768000
+	    || info.frames > (sf_count_t)info.samplerate * 600) {
 		sf_close (sf);
 		return NULL;
 	}
@@ -144,8 +147,8 @@ load_sample (const char* path)
 	}
 	s->frames  = info.frames;
 	s->rate    = info.samplerate;
-	s->data[0] = (float*)calloc (s->frames + 4, sizeof (float));
-	s->data[1] = (float*)calloc (s->frames + 4, sizeof (float));
+	s->data[0] = (float*)calloc ((size_t)s->frames + 4, sizeof (float));
+	s->data[1] = (float*)calloc ((size_t)s->frames + 4, sizeof (float));
 	if (!s->data[0] || !s->data[1]) {
 		free (buf);
 		free_sample (s);
