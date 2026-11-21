@@ -415,6 +415,7 @@ ScoreView::ScoreView ()
 	, _lasso_y1 (0)
 	, _fifths (0)
 	, _drum_content (false)
+	, _key_hint (0)
 {
 	add_events (Gdk::SCROLL_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK | Gdk::KEY_PRESS_MASK);
 	set_can_focus (true);
@@ -445,6 +446,15 @@ ScoreView::set_region (std::shared_ptr<MidiRegion> r)
 		_region->PropertyChanged.connect (_connections, invalidator (*this), std::bind (&ScoreView::model_changed, this), gui_context ());
 	}
 	rebuild ();
+}
+
+void
+ScoreView::set_key_hint (uint16_t pcs)
+{
+	if (_key_hint != pcs) {
+		_key_hint = pcs;
+		rebuild ();
+	}
 }
 
 void
@@ -577,6 +587,22 @@ ScoreView::rebuild ()
 				}
 			}
 			MusicalKey const* key = _track ? _track->key () : 0;
+			if (_key_hint) {
+				/* the key set for the region (Chord Pads): the major key holding most of its scale
+				 * (C dorian: B flat major, C harmonic minor: E flat major), the fewest accidentals on a tie */
+				int best_in = -1;
+				for (int f = -7; f <= 7; ++f) {
+					int in = 0;
+					for (int pc = 0; pc < 12; ++pc) {
+						in += ((_key_hint >> pc) & 1) && in_major (pc, f);
+					}
+					if (in > best_in || (in == best_in && std::abs (f) < std::abs (_fifths))) {
+						best_in = in;
+						_fifths = f;
+					}
+				}
+				key = 0;
+			}
 			for (int f = -7; key && f <= 7; ++f) {
 				bool same = true;
 				for (int pc = 0; pc < 12; ++pc) {
@@ -595,7 +621,7 @@ ScoreView::rebuild ()
 		 * current key (more than 15% of its note time outside) and fits
 		 * another one at least twice as well starts a new key */
 		_bar_fifths.assign (n_bars, _fifths);
-		if (!_percussion && !_drum_content && n_bars > 2) {
+		if (!_percussion && !_drum_content && !_key_hint && n_bars > 2) { /* a set key holds for the whole region */
 			std::vector<std::array<double, 12>> wb (n_bars);
 			for (auto& a : wb) {
 				a.fill (0);

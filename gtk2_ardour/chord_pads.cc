@@ -30,6 +30,7 @@
 
 #include "widgets/tooltips.h"
 
+#include "ardour_window.h"
 #include "chord_pads.h"
 
 #include "pbd/i18n.h"
@@ -386,10 +387,7 @@ protected:
 
 	bool on_button_press_event (GdkEventButton* ev)
 	{
-		if (ev->button == 1 && ev->type == GDK_2BUTTON_PRESS && pad_at (ev->x, ev->y) >= 0) {
-			_o.show_editor (true);
-			return true;
-		}
+		/* (the chord editor opens only with the Edit Chord button: a double-click popped it up while playing pads) */
 		if (ev->button != 1 || ev->type != GDK_BUTTON_PRESS) {
 			return false;
 		}
@@ -865,6 +863,7 @@ ChordPads::ChordPads ()
 	, _chord_keys (manage (new ChordKeys ()))
 	, _fill_button (_("Fill Pads"))
 	, _edit_button (_("Edit Chord"))
+	, _editor_window (0)
 	, _no_bass_button (_("None"))
 	, _oct_down ("−")
 	, _oct_up ("+")
@@ -879,6 +878,7 @@ ChordPads::ChordPads ()
 		_key_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (key_menu_names[i], [this, i] () {
 			_key_root = i;
 			fill_from_key (); /* like Cubase: the pads follow the key */
+			KeyChanged ();
 		}));
 	}
 	_key_dropdown.set_name ("generic button");
@@ -892,6 +892,7 @@ ChordPads::ChordPads ()
 		_scale_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_(scales[i].name), [this, i] () {
 			_scale = i;
 			fill_from_key ();
+			KeyChanged ();
 		}));
 	}
 	_scale_dropdown.set_name ("generic button");
@@ -905,7 +906,7 @@ ChordPads::ChordPads ()
 	(void) _fill_button; /* the pads are filled when the key or the scale is picked */
 	_edit_button.set_name ("generic button");
 	_edit_button.set_corner_radius (2);
-	ArdourWidgets::set_tooltip (_edit_button, _("Show the chord editor of the selected pad: root, type, tension, bass, voicing (also: double-click a pad)"));
+	ArdourWidgets::set_tooltip (_edit_button, _("Show the chord editor of the selected pad: root, type, tension, bass, voicing"));
 	_edit_button.signal_clicked.connect ([this] () { show_editor (!_edit_button.get_active ()); });
 	top->pack_start (_edit_button, false, false, 4);
 	_insert_button.set_name ("generic button");
@@ -1046,18 +1047,16 @@ ChordPads::ChordPads ()
 		main->pack_start (*cv, false, false);
 	}
 
-	/* the chord editor under the pads, shown on demand */
+	/* the chord editor, shown on demand in a small window of its own */
 	_editor_box.pack_start (*right, false, false);
-	_editor_box.set_border_width (2);
+	_editor_box.set_border_width (8);
+	_editor_box.show_all ();
 
 	pack_start (*top, false, false);
 	pack_start (*main, true, true);
-	pack_start (_editor_box, false, false);
 	set_spacing (4);
 	set_border_width (4);
 	show_all ();
-	_editor_box.set_no_show_all ();
-	_editor_box.hide ();
 	if ((int) _pads.size () != n_pads) {
 		fill_from_key (); /* the first time: the chords of C major */
 	} else {
@@ -1068,6 +1067,10 @@ ChordPads::ChordPads ()
 ChordPads::~ChordPads ()
 {
 	silence ();
+	if (_editor_window) {
+		_editor_window->remove ();
+		delete _editor_window;
+	}
 }
 
 void
@@ -1311,6 +1314,30 @@ ChordPads::edit (int what, int value)
 }
 
 void
+ChordPads::set_key (int root, int scale)
+{
+	if (root < 0 || root > 11 || scale < 0 || scale >= n_scales || !scales[scale].name[0]) {
+		return;
+	}
+	if (root == _key_root && scale == _scale) {
+		return;
+	}
+	_key_root = root;
+	_scale    = scale;
+	fill_from_key ();
+}
+
+uint16_t
+ChordPads::key_pitch_classes () const
+{
+	uint16_t m = 0;
+	for (int i = 0; i < 7; ++i) {
+		m |= 1 << ((_key_root + scales[_scale].st[i]) % 12);
+	}
+	return m;
+}
+
+void
 ChordPads::fill_from_key ()
 {
 	/* stack thirds inside the scale: the third and fifth give the triad, the seventh the seventh chord */
@@ -1366,11 +1393,32 @@ void
 ChordPads::show_editor (bool yn)
 {
 	_edit_button.set_active (yn);
-	if (yn) {
-		_editor_box.show ();
-	} else {
-		_editor_box.hide ();
+	if (!yn) {
+		if (_editor_window) {
+			_editor_window->hide ();
+		}
+		return;
 	}
+	if (!_editor_window) {
+		_editor_window = new ArdourWindow (_("Chord Editor"));
+		_editor_window->add (_editor_box);
+		_editor_window->set_resizable (false);
+		_editor_window->signal_hide ().connect ([this] () { _edit_button.set_active (false); });
+		/* closing the window only hides it (it is reused) */
+		_editor_window->signal_delete_event ().connect ([this] (GdkEventAny*) { _editor_window->hide (); return true; }, false);
+	}
+	if (Gtk::Window* top = dynamic_cast<Gtk::Window*> (get_toplevel ())) {
+		_editor_window->set_transient_for (*top);
+	}
+	if (!_editor_window->get_visible ()) {
+		/* open above the button (over the tracks), so the pads stay visible */
+		int x, y;
+		_edit_button.get_window ()->get_origin (x, y);
+		Gtk::Allocation const a   = _edit_button.get_allocation ();
+		Gtk::Requisition const r  = _editor_window->size_request ();
+		_editor_window->move (x + a.get_x (), std::max (0, y + a.get_y () - r.height - 40)); /* 40: title bar */
+	}
+	_editor_window->present ();
 }
 
 void

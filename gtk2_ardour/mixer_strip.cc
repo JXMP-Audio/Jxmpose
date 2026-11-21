@@ -32,11 +32,13 @@
 #include <sstream>
 #include <cmath>
 #include <list>
+#include <map>
 #include <algorithm>
 
 #include <sigc++/bind.h>
 
 #include <ytkmm/messagedialog.h>
+#include <ytkmm/sizegroup.h>
 
 #include "pbd/convert.h"
 #include "pbd/enumwriter.h"
@@ -1500,6 +1502,19 @@ MixerStrip::set_embedded (bool yn)
  * Channel, Notes. Mixer strip: Routing, Inserts and Fader racks that
  * open/close for all strips at once, name at the bottom.
  */
+/* mixer strips line up like a grid: every row (and every rack) has the same
+ * height in all strips, a row a strip does not have stays as empty space */
+static Glib::RefPtr<Gtk::SizeGroup>
+mixer_row_group (int row)
+{
+	static std::map<int, Glib::RefPtr<Gtk::SizeGroup>> groups;
+	Glib::RefPtr<Gtk::SizeGroup>& g = groups[row];
+	if (!g) {
+		g = Gtk::SizeGroup::create (Gtk::SIZE_GROUP_VERTICAL);
+	}
+	return g;
+}
+
 void
 MixerStrip::build_inspector_layout ()
 {
@@ -1587,16 +1602,31 @@ MixerStrip::build_inspector_layout ()
 	strip->add_item (*_channel_strip);
 
 	StudioSection* channel = manage (new StudioSection (_embedded ? _("Channel") : _("Fader"), pfx + X_("channel"), true));
-	channel->add_item (invert_button_box);
-	channel->add_item (panners);
-	channel->add_item (rec_mon_table);
-	channel->add_item (master_volume_table);
-	channel->add_item (solo_iso_table);
-	channel->add_item (mute_solo_table);
-	channel->add_item (*rw_box);
-	channel->add_item (gpm, true);
-	channel->add_item (control_slave_ui);
-	channel->add_item (bottom_button_table);
+	int grid_row = 0;
+	/* in the mixer each row sits in a box that is always there and as tall as that row in the
+	 * tallest strip; the Inspector shows one strip and keeps its rows compact */
+	auto add_row = [&] (StudioSection* sec, Gtk::Widget& w) {
+		++grid_row;
+		if (_embedded) {
+			sec->add_item (w);
+			return;
+		}
+		Gtk::VBox* cell = manage (new Gtk::VBox ());
+		cell->pack_start (w, true, true);
+		cell->show ();
+		mixer_row_group (grid_row)->add_widget (*cell);
+		sec->add_item (*cell);
+	};
+	add_row (channel, invert_button_box);
+	add_row (channel, panners);
+	add_row (channel, rec_mon_table);
+	add_row (channel, master_volume_table);
+	add_row (channel, solo_iso_table);
+	add_row (channel, mute_solo_table);
+	add_row (channel, *rw_box);
+	channel->add_item (gpm, true); /* the fader takes what is left: the same in every strip */
+	add_row (channel, control_slave_ui);
+	add_row (channel, bottom_button_table);
 
 	global_vpacker.set_spacing (4);
 	global_vpacker.pack_start (*routing, Gtk::PACK_SHRINK);
@@ -1624,6 +1654,16 @@ MixerStrip::build_inspector_layout ()
 		global_vpacker.pack_end (_comment_button, Gtk::PACK_SHRINK);
 	}
 	global_vpacker.pack_end (*channel, true, true);
+
+	if (!_embedded) {
+		/* the racks above the fader: as tall as in the tallest strip (an opened channel strip
+		 * module or a MIDI input row keeps the faders of all strips level) */
+		mixer_row_group (100)->add_widget (*routing);
+		mixer_row_group (101)->add_widget (*inserts);
+		mixer_row_group (102)->add_widget (*strip);
+		mixer_row_group (103)->add_widget (name_button);
+		mixer_row_group (104)->add_widget (_comment_button);
+	}
 
 	routing->show ();
 	inserts->show ();

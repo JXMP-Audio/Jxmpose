@@ -114,7 +114,7 @@ ChordLane::ChordLane (ChordPads& p)
 	add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK
 	            | Gdk::ENTER_NOTIFY_MASK | Gdk::SCROLL_MASK | Gdk::KEY_PRESS_MASK | Gdk::FOCUS_CHANGE_MASK);
 	set_can_focus (true);
-	set_size_request (600, 180);
+	set_size_request (600, lane_h);
 	std::vector<Gtk::TargetEntry> targets;
 	targets.push_back (Gtk::TargetEntry (ChordPads::drag_target (), Gtk::TARGET_SAME_APP));
 	drag_dest_set (targets, Gtk::DEST_DEFAULT_DROP | Gtk::DEST_DEFAULT_HIGHLIGHT, Gdk::ACTION_COPY);
@@ -226,7 +226,7 @@ void
 ChordLane::queue_resize_width ()
 {
 	const double w = tick_x (_r_end) + 40;
-	set_size_request ((int) std::max (300.0, w), 180);
+	set_size_request ((int) std::max (300.0, w), lane_h);
 	queue_draw ();
 }
 
@@ -307,7 +307,7 @@ ChordLane::on_expose_event (GdkEventExpose* ev)
 	}
 
 	/* the chords */
-	const double top = ruler_h + 8, bh = H - ruler_h - 16;
+	const double top = ruler_h + 5, bh = H - ruler_h - 10;
 	for (size_t i = 0; i < _blocks.size (); ++i) {
 		Block const& b  = _blocks[i];
 		int64_t      s  = b.start, e = b.end;
@@ -328,19 +328,30 @@ ChordLane::on_expose_event (GdkEventExpose* ev)
 		const uint32_t   c1 = sel ? 0x55688a : ((int) i == _hover ? 0x4a4e54 : 0x404348);
 		cairo_pattern_add_color_stop_rgb (g, 0, ((c0 >> 16) & 0xff) / 255.0, ((c0 >> 8) & 0xff) / 255.0, (c0 & 0xff) / 255.0);
 		cairo_pattern_add_color_stop_rgb (g, 1, ((c1 >> 16) & 0xff) / 255.0, ((c1 >> 8) & 0xff) / 255.0, (c1 & 0xff) / 255.0);
-		rounded (cr, x0, top, std::max (4.0, x1 - x0), bh, 5);
+		const double bw = std::max (3.0, x1 - x0);
+		rounded (cr, x0, top, bw, bh, std::min (5.0, bw / 3));
 		cairo_set_source (cr, g);
 		cairo_fill_preserve (cr);
 		cairo_pattern_destroy (g);
 		rgb (cr, sel ? 0xc9d6ea : 0x6a6f77);
 		cairo_set_line_width (cr, sel ? 1.5 : 1);
 		cairo_stroke (cr);
-		/* grips at the ends */
-		rgb (cr, 0xffffff, 0.18);
-		cairo_rectangle (cr, x0 + 2, top + bh / 2 - 8, 2, 16);
-		cairo_rectangle (cr, x1 - 4, top + bh / 2 - 8, 2, 16);
-		cairo_fill (cr);
+		/* narrow blocks (short chords, or every hit of a drum region) stay plain tiles:
+		 * grips and text only where they fit, never a row of ellipses */
+		if (bw >= 24) {
+			/* grips at the ends */
+			rgb (cr, 0xffffff, 0.18);
+			cairo_rectangle (cr, x0 + 2, top + bh / 2 - 8, 2, 16);
+			cairo_rectangle (cr, x1 - 4, top + bh / 2 - 8, 2, 16);
+			cairo_fill (cr);
+		}
+		if (bw < 30) {
+			continue;
+		}
 		show_text (cr, *this, ChordPads::notes_markup (b.pitches), "Sans Bold 12", x0 + 6, top + bh / 2 - 6, x1 - x0 - 12, 0xffffff, true);
+		if (bw < 48) {
+			continue;
+		}
 		/* the notes, small */
 		std::string nn;
 		for (int p : b.pitches) {
@@ -563,6 +574,8 @@ ChordLane::on_enter_notify_event (GdkEventCrossing* ev)
 {
 	_mouse_x  = ev->x;
 	_mouse_in = true;
+	/* keys go to the chords under the mouse, not to the editor */
+	grab_focus ();
 	return false;
 }
 
@@ -657,6 +670,12 @@ ChordLane::handle_key (GdkEventKey* ev)
 		last_time = ev->time;
 		last_key  = ev->keyval;
 		queue_draw ();
+	}
+	/* edit keys with nothing to act on in the lane stay here: passed on, the editor's own
+	 * Cut / Delete / Paste took the selected region itself (a whole MIDI region was cut) */
+	if (!done && (key == GDK_KEY_Delete || key == GDK_KEY_BackSpace
+	              || (ctrl && (key == GDK_KEY_x || key == GDK_KEY_c || key == GDK_KEY_v || key == GDK_KEY_d)))) {
+		return true;
 	}
 	return done;
 }
@@ -866,6 +885,9 @@ ChordLane::insert_notes (std::vector<uint8_t> const& p, std::string const& name,
 	}
 	model->apply_diff_command_as_commit (*_history, cmd);
 	select_starting (tick, tick + 1);
+	/* the new chord is selected: Ctrl+C / Ctrl+V must reach the lane now, not the editor
+	 * (which would copy the whole region and paste it as a new layer) */
+	grab_focus ();
 	queue_draw ();
 }
 
