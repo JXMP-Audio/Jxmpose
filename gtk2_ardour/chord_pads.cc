@@ -1506,6 +1506,83 @@ ChordPads::play_chord (Chord const& c)
 	}
 }
 
+bool
+ChordPads::identify (std::vector<int> const& notes, Chord& out)
+{
+	if (notes.size () < 2) {
+		return false;
+	}
+	std::set<int> pcs;
+	int           lo = 128;
+	for (int n : notes) {
+		pcs.insert (((n % 12) + 12) % 12);
+		lo = std::min (lo, n);
+	}
+	const int bass = lo % 12;
+	/* fewest notes added first: plain triads before tensions; the bass as root before slash chords */
+	int best = -1;
+	for (int pass = 0; pass < 2; ++pass) {
+		for (int tn = 0; tn < n_tensions; ++tn) {
+			for (int ty = 0; ty < n_types; ++ty) {
+				for (int r = 0; r < 12; ++r) {
+					if ((pass == 0) != (r == bass)) {
+						continue;
+					}
+					Chord         c { r, ty, tn, -1, 0, 0 };
+					std::set<int> cp;
+					for (int n : chord_pitches (c)) {
+						cp.insert (n % 12);
+					}
+					if (cp == pcs) {
+						c.bass = r == bass ? -1 : bass;
+						c.octave = lo / 12 - 5;
+						out      = c;
+						return true;
+					}
+				}
+			}
+		}
+	}
+	(void) best;
+	return false;
+}
+
+std::string
+ChordPads::notes_markup (std::vector<int> const& notes)
+{
+	Chord c;
+	if (identify (notes, c)) {
+		return chord_markup (c);
+	}
+	std::string s;
+	std::set<int> seen;
+	for (int n : notes) {
+		if (seen.insert (n % 12).second) {
+			s += (s.empty () ? "" : " ") + signs (pc_name (n % 12));
+		}
+	}
+	return s;
+}
+
+void
+ChordPads::play_notes (std::vector<int> const& notes)
+{
+	silence ();
+	if (!_track) {
+		return;
+	}
+	_sounding_ch = (uint8_t) std::max (0, std::min (15, _channel));
+	for (int n : notes) {
+		uint8_t ev[3] = { (uint8_t) (0x90 | _sounding_ch), (uint8_t) n, 100 };
+		_track->write_immediate_event (Evoral::MIDI_EVENT, 3, ev);
+		_sounding.push_back ((uint8_t) n);
+	}
+	Chord c;
+	if (identify (notes, c)) {
+		set_last (c);
+	}
+}
+
 void
 ChordPads::silence ()
 {

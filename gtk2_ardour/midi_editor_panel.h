@@ -27,6 +27,7 @@
 
 #include "widgets/ardour_button.h"
 
+#include "chord_lane.h"
 #include "chord_pads.h"
 #include "score_view.h"
 
@@ -86,6 +87,9 @@ private:
 	ArdourWidgets::ArdourButton score_button;
 	ArdourWidgets::ArdourButton chord_button;
 	ChordPads                   chord_pads;
+	/** in the chord mode the region shows as a row of chords instead of the piano roll */
+	ChordLane                   chord_lane;
+	Gtk::ScrolledWindow         chord_lane_scroller;
 	/** write a pad's chord at a position of the region's source (beats) */
 	void insert_chord (int pad, Temporal::Beats source_start);
 	void insert_notes (std::vector<uint8_t> const&, std::string const& name, Temporal::Beats source_start);

@@ -87,6 +87,16 @@ public:
 	 *  relative), 2 good (two steps), 1 possible (three), 0 far; -1 the same chord */
 	static int fit (Chord const& last, Chord const& next);
 
+	/** the chord some notes form (any voicing, a bass note other than the root becomes a slash chord);
+	 *  false if they are no known chord */
+	static bool identify (std::vector<int> const& notes, Chord&);
+	/** a short name of some notes: the chord's markup, else the note names */
+	static std::string notes_markup (std::vector<int> const& notes);
+
+	/** sound notes on the track (until silence ()), and let the circle follow the chord they form */
+	void play_notes (std::vector<int> const& notes);
+	void silence ();
+
 	class PadGrid;
 	class KeyPicker;
 	class ChordKeys;
@@ -141,5 +151,4 @@ private:
 	void pad_released ();
 	void sound (int pad);
 	void play_chord (Chord const&);
-	void silence ();
 };

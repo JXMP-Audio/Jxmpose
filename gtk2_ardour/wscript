@@ -232,6 +232,7 @@ gtk2_ardour_sources = [
         'pianoroll_background.cc',
         'pianoroll_velocity.cc',
         'pianoroll_midi_view.cc',
+        'chord_lane.cc',
         'chord_pads.cc',
         'midi_editor_panel.cc',
         'pianoroll_window.cc',

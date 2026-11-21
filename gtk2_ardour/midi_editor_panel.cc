@@ -46,6 +46,7 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	, drum_button (_("Drum Editor"))
 	, score_button (_("Score Editor"))
 	, chord_button (_("Chord Pads"))
+	, chord_lane (chord_pads)
 	, all_drums_button (_("All Drums"))
 	, drum_notation_button (_("Drum Notation"))
 	, dot_button (".")
@@ -160,8 +161,13 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 		cv->signal_drag_data_received ().connect (sigc::mem_fun (*this, &MidiEditorPanel::chord_dropped));
 	}
 
+	chord_lane_scroller.set_policy (Gtk::POLICY_AUTOMATIC, Gtk::POLICY_NEVER);
+	chord_lane_scroller.add (chord_lane);
+	chord_lane_scroller.set_size_request (-1, 140);
+
 	pack_start (mode_bar, false, false);
-	pack_start (chord_pads, false, false);
+	pack_start (chord_pads, true, true);
+	pack_start (chord_lane_scroller, false, false);
 	pack_start (hpacker, true, true);
 	pack_start (score_placeholder, true, true);
 	show_all ();
@@ -171,6 +177,8 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 	hpacker.set_no_show_all ();
 	chord_pads.set_no_show_all ();
 	chord_pads.hide ();
+	chord_lane_scroller.set_no_show_all ();
+	chord_lane_scroller.hide ();
 	all_drums_button.set_no_show_all ();
 	all_drums_button.hide ();
 	drum_notation_button.set_no_show_all ();
@@ -191,8 +199,15 @@ MidiEditorPanel::set_editor_mode (EditorMode m)
 	if (m == ChordEditor) {
 		chord_pads.set_channel (std::max (0, _pianoroll->visible_channel ()));
 		chord_pads.show ();
+		chord_lane.set_channel (_pianoroll->visible_channel ());
+		chord_lane.set_history (&_pianoroll->history ());
+		chord_lane.set_region (_region);
+		chord_lane_scroller.show_all ();
+		chord_lane_scroller.show ();
 	} else {
 		chord_pads.hide ();
+		chord_lane_scroller.hide ();
+		chord_lane.set_region (std::shared_ptr<ARDOUR::MidiRegion> ());
 	}
 	if (m == DrumEditor) {
 		all_drums_button.show ();
@@ -223,6 +238,10 @@ MidiEditorPanel::set_editor_mode (EditorMode m)
 	}
 
 	score_placeholder.hide ();
+	if (m == ChordEditor) {
+		hpacker.hide ();
+		return;
+	}
 	hpacker.show ();
 
 	/* the drum editor shows notes as hits (percussive note mode) */
@@ -244,6 +263,7 @@ void
 MidiEditorPanel::set_session (ARDOUR::Session* s)
 {
 	_pianoroll->set_session (s);
+	chord_lane.set_session (s);
 }
 
 void
@@ -270,6 +290,9 @@ MidiEditorPanel::set_region (std::shared_ptr<MidiTrack> track, std::shared_ptr<M
 	if (_mode == ScoreEditor) {
 		score_view.set_region (region);
 	}
+	if (_mode == ChordEditor) {
+		chord_lane.set_region (region);
+	}
 
 	/* follow the track's note mode (drum tracks open in the drum editor) */
 	if (_mode != ScoreEditor && _mode != ChordEditor) {
@@ -285,6 +308,9 @@ MidiEditorPanel::replace_region (std::shared_ptr<MidiTrack> track, std::shared_p
 	_region = region;
 	if (_mode == ScoreEditor) {
 		score_view.set_region (region);
+	}
+	if (_mode == ChordEditor) {
+		chord_lane.set_region (region);
 	}
 }
 
@@ -329,6 +355,26 @@ MidiEditorPanel::apply_note_value (bool to_selection)
 bool
 MidiEditorPanel::handle_key (GdkEventKey* ev)
 {
+	/* the chord lane: Delete, arrows, undo / redo of the region edits */
+	if (_mode == ChordEditor) {
+		if (chord_lane.handle_key (ev)) {
+			return true;
+		}
+		if (ev->state & Gtkmm2ext::Keyboard::PrimaryModifier) {
+			if (ev->keyval == GDK_z || ev->keyval == GDK_Z) {
+				if (ev->state & Gtkmm2ext::Keyboard::TertiaryModifier) {
+					_pianoroll->redo ();
+				} else {
+					_pianoroll->undo ();
+				}
+				return true;
+			}
+			if (ev->keyval == GDK_y || ev->keyval == GDK_Y) {
+				_pianoroll->redo ();
+				return true;
+			}
+		}
+	}
 	/* score editing keys first (Delete, arrows, Escape) */
 	if (_mode == ScoreEditor) {
 		if (score_view.handle_key (ev)) {

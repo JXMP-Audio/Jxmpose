@@ -51,6 +51,13 @@ Ardour project.
   steps, orange three; a dominant seventh prefers to resolve down a fifth.
   The pads get the same coloured strip. Click a chord of the circle to hear
   it, drag it onto a pad or into the notes.
+  In this mode the piano roll gives way to a **chord lane**: the region's
+  notes that start together show as one block named by their chord (any
+  voicing, slash chords too). Drop pads or circle chords on it to write
+  them (onto a block: replace it), drag a block to move it, its edges to
+  change its length (snapped to beats, Shift: sixteenths), Delete removes
+  it, Ctrl+Z undoes, double-click on empty space writes the selected pad,
+  a click on the ruler moves the playhead, Ctrl+wheel zooms.
   In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and
   click notes into the staff; click or drag notes to select and move them,
   pick a value to change their length, Delete removes, Up/Down transposes,
