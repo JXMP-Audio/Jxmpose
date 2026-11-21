@@ -59,6 +59,15 @@ public:
 	/** "Insert at Playhead" was clicked with this pad selected */
 	sigc::signal<void, int> InsertRequested;
 
+	/** the key of the pads (root 0 .. 11, scale index); set_key fills the pads when it changes */
+	int  key_root () const { return _key_root; }
+	int  key_scale () const { return _scale; }
+	void set_key (int root, int scale);
+	/** the pitch classes of the key's scale, bit n = pitch class n */
+	uint16_t key_pitch_classes () const;
+	/** the key was changed with the Key or Scale menu */
+	sigc::signal<void> KeyChanged;
+
 	/** drag and drop target of a pad or a chord of the circle of fifths; the data is the pad number, or
 	 *  "c<root>:<type>:<tension>:<octave>" for a chord of the circle */
 	static const char* drag_target () { return "application/x-jxmpose-chord-pad"; }

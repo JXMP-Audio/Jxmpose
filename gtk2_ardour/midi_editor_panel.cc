@@ -29,6 +29,8 @@
 #include "gtkmm2ext/colors.h"
 #include "gtkmm2ext/keyboard.h"
 
+#include "ardour_ui.h"
+#include "gui_object.h"
 #include "midi_editor_panel.h"
 #include "pianoroll_midi_view.h"
 #include "pianoroll.h"
@@ -293,6 +295,7 @@ MidiEditorPanel::MidiEditorPanel (std::string const& name, bool with_transport, 
 
 	/* chord pads: dropped onto the notes they write the chord there */
 	chord_pads.InsertRequested.connect (sigc::mem_fun (*this, &MidiEditorPanel::insert_chord_at_playhead));
+	chord_pads.KeyChanged.connect (sigc::mem_fun (*this, &MidiEditorPanel::save_region_key));
 	{
 		std::vector<Gtk::TargetEntry> targets;
 		targets.push_back (Gtk::TargetEntry (ChordPads::drag_target (), Gtk::TARGET_SAME_APP));
@@ -412,6 +415,47 @@ MidiEditorPanel::set_show_source (bool yn)
 	_pianoroll->set_show_source (yn);
 }
 
+/* the key set in the Chord Pads belongs to the region: kept in the session's GUI state, it comes back
+ * after a restart and when the region is opened again, and the score writes its key signature */
+static std::string
+region_key_id (std::shared_ptr<ARDOUR::MidiRegion> r)
+{
+	return std::string (X_("chord-key ")) + r->id ().to_s ();
+}
+
+void
+MidiEditorPanel::load_region_key ()
+{
+	if (!_region || !ARDOUR_UI::instance () || !ARDOUR_UI::instance ()->gui_object_state) {
+		score_view.set_key_hint (0);
+		return;
+	}
+	GUIObjectState& gs (*ARDOUR_UI::instance ()->gui_object_state);
+	bool              empty = true;
+	std::string const root  = gs.get_string (region_key_id (_region), X_("root"), &empty);
+	if (empty || root.empty ()) {
+		score_view.set_key_hint (0);
+		return;
+	}
+	std::string const scale = gs.get_string (region_key_id (_region), X_("scale"));
+	chord_pads.set_key (atoi (root.c_str ()), atoi (scale.c_str ()));
+	score_view.set_key_hint (chord_pads.key_pitch_classes ());
+}
+
+void
+MidiEditorPanel::save_region_key ()
+{
+	if (_region && ARDOUR_UI::instance () && ARDOUR_UI::instance ()->gui_object_state) {
+		GUIObjectState& gs (*ARDOUR_UI::instance ()->gui_object_state);
+		gs.set_property (region_key_id (_region), X_("root"), chord_pads.key_root ());
+		gs.set_property (region_key_id (_region), X_("scale"), chord_pads.key_scale ());
+		if (ARDOUR::Session* sess = ARDOUR_UI::instance ()->the_session ()) {
+			sess->set_dirty ();
+		}
+	}
+	score_view.set_key_hint (_region ? chord_pads.key_pitch_classes () : 0);
+}
+
 void
 MidiEditorPanel::add_region (std::shared_ptr<MidiTrack> track, std::shared_ptr<MidiRegion> region)
 {
@@ -425,6 +469,7 @@ MidiEditorPanel::set_region (std::shared_ptr<MidiTrack> track, std::shared_ptr<M
 	_pianoroll->set_region (region);
 	_region = region;
 	_track  = track;
+	load_region_key ();
 	score_view.set_track (track);
 	chord_pads.set_track (track);
 	if (_mode == ScoreEditor) {
@@ -446,6 +491,7 @@ MidiEditorPanel::replace_region (std::shared_ptr<MidiTrack> track, std::shared_p
 {
 	_pianoroll->replace_region (region, track);
 	_region = region;
+	load_region_key ();
 	if (_mode == ScoreEditor) {
 		score_view.set_region (region);
 	}

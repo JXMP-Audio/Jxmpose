@@ -77,6 +77,9 @@ public:
 	bool percussion () const { return _percussion; }
 	/** the region holds drums: no key signature, even on the grand staff */
 	void set_drum_content (bool);
+	/** the key the user set for the region (bit n = pitch class n of its scale; 0: none):
+	 * the key signature follows it instead of guessing from the notes */
+	void set_key_hint (uint16_t pitch_classes);
 
 	/** undo history for edits (the pianoroll's) */
 	void set_history (PBD::HistoryOwner* h) { _history = h; }
@@ -286,6 +289,7 @@ private:
 	int64_t snap_step () const;
 	int64_t snap_time (int64_t ticks_in_bar) const;
 	bool    _drum_content;
+	uint16_t _key_hint;
 	void    play (NotePtr const&);
 
 	bool    pitch_at (double x, double y, size_t& bar, uint8_t& pitch) const;

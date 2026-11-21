@@ -878,6 +878,7 @@ ChordPads::ChordPads ()
 		_key_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (key_menu_names[i], [this, i] () {
 			_key_root = i;
 			fill_from_key (); /* like Cubase: the pads follow the key */
+			KeyChanged ();
 		}));
 	}
 	_key_dropdown.set_name ("generic button");
@@ -891,6 +892,7 @@ ChordPads::ChordPads ()
 		_scale_dropdown.add_menu_elem (Gtk::Menu_Helpers::MenuElem (_(scales[i].name), [this, i] () {
 			_scale = i;
 			fill_from_key ();
+			KeyChanged ();
 		}));
 	}
 	_scale_dropdown.set_name ("generic button");
@@ -1309,6 +1311,30 @@ ChordPads::edit (int what, int value)
 	/* let the change be heard, like a pad press */
 	set_last (_pads[_sel]);
 	audition (_sel, 700);
+}
+
+void
+ChordPads::set_key (int root, int scale)
+{
+	if (root < 0 || root > 11 || scale < 0 || scale >= n_scales || !scales[scale].name[0]) {
+		return;
+	}
+	if (root == _key_root && scale == _scale) {
+		return;
+	}
+	_key_root = root;
+	_scale    = scale;
+	fill_from_key ();
+}
+
+uint16_t
+ChordPads::key_pitch_classes () const
+{
+	uint16_t m = 0;
+	for (int i = 0; i < 7; ++i) {
+		m |= 1 << ((_key_root + scales[_scale].st[i]) % 12);
+	}
+	return m;
 }
 
 void
