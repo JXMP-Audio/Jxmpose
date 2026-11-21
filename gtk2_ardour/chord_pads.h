@@ -28,14 +28,16 @@
 #include "temporal/beats.h"
 
 #include "widgets/ardour_button.h"
+#include "widgets/ardour_dropdown.h"
 
 namespace ARDOUR {
 	class MidiTrack;
 }
 
-/** Chord pads (like Cubase's): a row of pads, each holding a chord built from a root, a chord type, a
+/** Chord pads (like Cubase's): a grid of pads, each holding a chord built from a root, a chord type, a
  *  tension and a bass note, with an inversion and an octave. Holding a pad plays the chord on the track's
- *  instrument, dragging it onto the note editor writes it there. The pads are shared by all MIDI editors. */
+ *  instrument, dragging it onto the note editor writes it there. A key fills the pads with its chords and
+ *  names them by degree. The pads are shared by all MIDI editors. */
 class ChordPads : public Gtk::VBox
 {
 public:
@@ -60,7 +62,6 @@ public:
 
 	static const int n_pads = 8;
 
-private:
 	struct Chord {
 		int root;      ///< 0 = C .. 11 = B
 		int type;      ///< index into the chord types
@@ -69,8 +70,23 @@ private:
 		int inversion; ///< 0 = root position
 		int octave;    ///< offset from the octave of middle C
 	};
+	static std::vector<int> chord_pitches (Chord const&);
+	static std::string      chord_name (Chord const&);
+	/** degree in the current key (I, ii, V7 ...), empty outside it */
+	static std::string      degree (Chord const&);
+	static Chord const&     pad (int i) { return _pads[i]; }
+	/** name of a pitch class, with flats in flat keys (Bb, Eb ...) and sharps otherwise */
+	static const char*      pc_name (int pc);
+
+	class PadGrid;
+	class KeyPicker;
+	class ChordKeys;
+
+private:
 	static std::vector<Chord> _pads;
-	static int                _len; ///< index into the lengths
+	static int                _len;       ///< index into the lengths
+	static int                _key_root;  ///< key of the pads (for Fill Pads and the degrees)
+	static bool               _key_minor;
 
 	int                                         _sel;
 	std::shared_ptr<ARDOUR::MidiTrack>          _track;
@@ -79,30 +95,32 @@ private:
 	int                                         _channel;
 	sigc::connection                            _stop_timer;
 
-	Gtk::HBox                                   _pad_box;
-	std::vector<ArdourWidgets::ArdourButton*>   _pad_buttons;
-	Gtk::VBox                                   _editor;
-	std::vector<ArdourWidgets::ArdourButton*>   _root_buttons;
+	PadGrid*                                    _grid;
+	KeyPicker*                                  _root_picker;
+	KeyPicker*                                  _bass_picker;
+	ChordKeys*                                  _chord_keys;
+	ArdourWidgets::ArdourDropdown               _key_dropdown;
+	ArdourWidgets::ArdourDropdown               _scale_dropdown;
+	ArdourWidgets::ArdourButton                 _fill_button;
+	ArdourWidgets::ArdourButton                 _no_bass_button;
 	std::vector<ArdourWidgets::ArdourButton*>   _type_buttons;
 	std::vector<ArdourWidgets::ArdourButton*>   _tension_buttons;
-	std::vector<ArdourWidgets::ArdourButton*>   _bass_buttons;
 	std::vector<ArdourWidgets::ArdourButton*>   _inversion_buttons;
 	std::vector<ArdourWidgets::ArdourButton*>   _length_buttons;
 	ArdourWidgets::ArdourButton                 _oct_down;
 	ArdourWidgets::ArdourButton                 _oct_up;
 	Gtk::Label                                  _oct_label;
 	ArdourWidgets::ArdourButton                 _insert_button;
-	Gtk::Label                                  _notes_label;
-
-	static std::vector<int> chord_pitches (Chord const&);
-	static std::string      chord_name (Chord const&);
+	Gtk::Label                                  _title;
 
 	void select_pad (int);
 	void edit (int what, int value); ///< what: 0 root, 1 type, 2 tension, 3 bass, 4 inversion, 5 octave step
+	void fill_from_key ();
 	void update ();
+	void audition (int pad, int ms);
 
-	bool pad_press (GdkEventButton*, int pad);
-	bool pad_release (GdkEventButton*);
+	void pad_pressed (int pad);
+	void pad_released ();
 	void sound (int pad);
 	void silence ();
 };

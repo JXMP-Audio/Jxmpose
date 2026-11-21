@@ -33,11 +33,14 @@ Ardour project.
   subfolders; a collapsed folder keeps its instrument bus visible.
 - **MIDI editor** — switch between *Key*, *Drum* (one row per drum sound),
   *Score* (music notation, also as drum notation) and *Chord Pads* for the
-  same region. Chord Pads: eight pads, each a chord built from a root, a
-  type (Maj, Min, Dim, Aug, Sus2, Sus4, 5), a tension (6, 7, maj7, 9, 11,
-  13, b9, #9, #11, b13, 6/9 …), a bass note, an inversion and an octave;
-  hold a pad to hear it on the track's instrument, drag it into the notes
-  to write it there (snapped to the grid) or use *Insert at Playhead*.
+  same region. Chord Pads: eight pads, each a chord built from a root and
+  a bass note (picked on a keyboard), a type (Maj, Min, Dim, Aug, Sus2,
+  Sus4, 5), a tension (6, 7, maj7, 9, 11, 13, b9, #9, #11, b13, 6/9 …), an
+  inversion and an octave; a keyboard shows the notes of the chord. Pick a
+  key and *Fill Pads* puts its chords on the pads (named by degree, spelled
+  with flats in flat keys). Hold a pad to hear it on the track's
+  instrument, drag it into the notes to write it there (snapped to the
+  grid) or use *Insert at Playhead*.
   In the score, pick a note value (keys 4–8, `.` dotted, `;` triplet) and
   click notes into the staff; click or drag notes to select and move them,
   pick a value to change their length, Delete removes, Up/Down transposes,
