@@ -201,18 +201,30 @@ NoteEditorWindow::start_job (Busy what)
 	_job_region   = _region;
 	_job_out.clear ();
 
-	JobProgress*                         prog = _job_progress.get ();
-	std::shared_ptr<AudioRegion>         r    = _job_region;
+	/* the sources and range are taken here, in the GUI thread: the region may change while the worker runs
+	 * (the result is checked against it when it is done) */
+	JobProgress* prog = _job_progress.get ();
+	bool         ok   = _region && NoteEdit::source_range (_region, _job_range);
+	if (ok && what == Rendering) {
+		ok = NoteEdit::can_render (_region);
+	}
 	if (what == Analysing) {
 		_toolbar.set_sensitive (false);
-		_worker = std::thread ([this, r, prog] () {
-			_job_rv   = NoteEdit::analyse (r, _job_an, prog);
+	}
+	if (!ok) {
+		/* nothing to run: busy_tick () reports the error */
+		_job_done = true;
+	} else if (what == Analysing) {
+		NoteEdit::SourceRange const range = _job_range;
+		_worker = std::thread ([this, range, prog] () {
+			_job_rv   = NoteEdit::analyse (range, _job_an, prog);
 			_job_done = true;
 		});
 	} else {
+		NoteEdit::SourceRange const range = _job_range;
 		_job_notes = _notes;
-		_worker    = std::thread ([this, r, prog] () {
-			_job_rv   = NoteEdit::render_region (r, _job_notes, _an, _job_out, prog);
+		_worker    = std::thread ([this, range, prog] () {
+			_job_rv   = NoteEdit::render_range (range, _job_notes, _an, _job_out, prog);
 			_job_done = true;
 		});
 	}
@@ -234,6 +246,7 @@ NoteEditorWindow::stop_job ()
 	_busy_timer.disconnect ();
 	_busy = NotBusy;
 	_job_region.reset ();
+	_job_range = NoteEdit::SourceRange ();
 	_job_out.clear ();
 	_job_progress.reset ();
 }
@@ -246,7 +259,9 @@ NoteEditorWindow::busy_tick ()
 	if (!_job_done) {
 		return true;
 	}
-	_worker.join ();
+	if (_worker.joinable ()) {
+		_worker.join ();
+	}
 	const Busy what = _busy;
 	_busy           = NotBusy;
 	_busy_timer.disconnect ();
@@ -264,6 +279,14 @@ NoteEditorWindow::analysis_done ()
 	_toolbar.set_sensitive (true);
 	_job_progress.reset ();
 	_job_region.reset ();
+	if (_job_rv == 0 && !region_unchanged ()) {
+		/* trimmed or replaced while it was analysed: the result is for audio the region no longer plays */
+		_job_an = NoteEdit::Analysis ();
+		_status.set_text (_("The region changed during the analysis, analysing it again..."));
+		start_job (Analysing);
+		return;
+	}
+	_job_range = NoteEdit::SourceRange ();
 	if (_job_rv) {
 		_an.length       = 0;
 		_analysis_failed = true;
@@ -1605,6 +1628,13 @@ NoteEditorWindow::discard_render ()
 	_canvas.queue_draw ();
 }
 
+bool
+NoteEditorWindow::region_unchanged () const
+{
+	NoteEdit::SourceRange now;
+	return _region && NoteEdit::source_range (_region, now) && now.same_audio (_job_range);
+}
+
 void
 NoteEditorWindow::render_done ()
 {
@@ -1614,7 +1644,7 @@ NoteEditorWindow::render_done ()
 	vector<NoteEdit::Note> notes;
 	notes.swap (_job_notes);
 
-	const std::string again = _render_again;
+	std::string again = _render_again;
 	_render_again.clear ();
 	struct Next {
 		NoteEditorWindow& w;
@@ -1632,8 +1662,19 @@ NoteEditorWindow::render_done ()
 	std::shared_ptr<Playlist> pl = jr ? jr->playlist () : std::shared_ptr<Playlist> ();
 	if (!_session || !pl || jr != _region) {
 		_job_out.clear ();
+		_job_range = NoteEdit::SourceRange ();
 		return;
 	}
+	if (!region_unchanged ()) {
+		/* trimmed while rendering: the audio and the analysis no longer fit the region */
+		_job_out.clear ();
+		_render_again.clear ();
+		again.clear ();
+		_status.set_text (_("The region changed while the edit was rendered, analysing it again..."));
+		start_job (Analysing);
+		return;
+	}
+	_job_range = NoteEdit::SourceRange ();
 
 	NoteEdit::Filter f (*_session, notes, _an);
 	f.set_rendered (_job_out);

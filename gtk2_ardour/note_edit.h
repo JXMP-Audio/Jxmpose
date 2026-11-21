@@ -97,11 +97,26 @@ std::vector<float> drift_curve (Analysis const&, Note const&, ARDOUR::samplepos_
 /** Master-source range the region plays (start, length) */
 void region_master_range (std::shared_ptr<ARDOUR::AudioRegion>, ARDOUR::samplepos_t& start, ARDOUR::samplecnt_t& len);
 
-/** Reads the region's master sources (all channels) at master-source positions */
-bool read_master (std::shared_ptr<ARDOUR::AudioRegion>, ARDOUR::samplepos_t start, ARDOUR::samplecnt_t len, std::vector<std::vector<float> >& out);
+/** What a worker thread reads: the region's master sources (one per channel) and the range of them the region
+ *  plays. Taken in the GUI thread, so the worker never touches the region itself (it may be trimmed, moved or
+ *  removed meanwhile, and its positions may be in music time, which needs the tempo map of the GUI thread). */
+struct SourceRange {
+	std::vector<std::shared_ptr<ARDOUR::AudioSource> > sources;
+	ARDOUR::samplepos_t start;
+	ARDOUR::samplecnt_t len;
+	ARDOUR::samplecnt_t sr;
+	SourceRange () : start (0), len (0), sr (0) {}
+	/** the same audio is read from both */
+	bool same_audio (SourceRange const& o) const { return sources == o.sources && start == o.start && len == o.len; }
+};
+/** GUI thread only. False when the region has no audio master sources. */
+bool source_range (std::shared_ptr<ARDOUR::AudioRegion>, SourceRange&);
 
-/** pYIN analysis of the region's range (mono sum). Returns 0 on success. */
-int analyse (std::shared_ptr<ARDOUR::AudioRegion>, Analysis&, PBD::Progress* progress = 0);
+/** Reads the master sources (all channels) of the range; safe in a worker thread */
+bool read_master (SourceRange const&, std::vector<std::vector<float> >& out);
+
+/** pYIN analysis of the range (mono sum). Returns 0 on success. Safe in a worker thread. */
+int analyse (SourceRange const&, Analysis&, PBD::Progress* progress = 0);
 
 /** Notes saved on the region (empty when it was never edited) */
 bool load_notes (std::shared_ptr<ARDOUR::Region const>, std::vector<Note>&);
@@ -143,8 +158,15 @@ void render (std::vector<std::vector<float> > const& in, ARDOUR::samplepos_t ori
              std::vector<Note> const&, Analysis const&, std::vector<std::vector<float> >& out,
              PBD::Progress* progress = 0);
 
-/** Reads the region's original audio and renders the notes into it (no session state is touched, so this
- *  can run in a worker thread). Returns 0 on success, -1 on an error or when `progress` was cancelled. */
+/** Reads the original audio of the range and renders the notes into it (nothing but the sources is touched,
+ *  so this can run in a worker thread). Returns 0 on success, -1 on an error or when `progress` was cancelled. */
+int render_range (SourceRange const&, std::vector<Note> const&, Analysis const&,
+                  std::vector<std::vector<float> >& out, PBD::Progress* progress = 0);
+
+/** True when the region can be rendered (no time stretch / pitch shift of its own); logs why not */
+bool can_render (std::shared_ptr<ARDOUR::AudioRegion>);
+
+/** render_range () of the region's range, GUI thread */
 int render_region (std::shared_ptr<ARDOUR::AudioRegion>, std::vector<Note> const&, Analysis const&,
                    std::vector<std::vector<float> >& out, PBD::Progress* progress = 0);
 

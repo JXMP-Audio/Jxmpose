@@ -56,18 +56,31 @@ region_master_range (std::shared_ptr<AudioRegion> r, samplepos_t& start, samplec
 }
 
 bool
-read_master (std::shared_ptr<AudioRegion> r, samplepos_t start, samplecnt_t len, vector<vector<float> >& out)
+source_range (std::shared_ptr<AudioRegion> r, SourceRange& sr)
 {
-	const uint32_t nch = r->n_channels ();
-	out.assign (nch, vector<float> (len, 0.f));
-	/* master_read_at() maps a timeline position to the master sources the same way the region maps it to
-	 * its own: source = timeline - position + start */
-	const samplepos_t timeline = start - r->start_sample () + r->position_sample ();
-	const samplecnt_t chunk    = 65536;
-	for (uint32_t c = 0; c < nch; ++c) {
-		for (samplecnt_t pos = 0; pos < len; pos += chunk) {
-			const samplecnt_t n = std::min (chunk, len - pos);
-			if (r->master_read_at (&out[c][pos], timeline + pos, n, c) != n) {
+	sr = SourceRange ();
+	region_master_range (r, sr.start, sr.len);
+	sr.sr = r->session ().sample_rate ();
+	for (auto const& s : r->master_sources ()) {
+		std::shared_ptr<AudioSource> as = std::dynamic_pointer_cast<AudioSource> (s);
+		if (!as) {
+			return false;
+		}
+		sr.sources.push_back (as);
+	}
+	return !sr.sources.empty ();
+}
+
+bool
+read_master (SourceRange const& sr, vector<vector<float> >& out)
+{
+	out.assign (sr.sources.size (), vector<float> (sr.len, 0.f));
+	const samplecnt_t chunk = 65536;
+	for (size_t c = 0; c < sr.sources.size (); ++c) {
+		/* AudioSource::read () takes the source's own lock: fine next to the butler */
+		for (samplecnt_t pos = 0; pos < sr.len; pos += chunk) {
+			const samplecnt_t n = std::min (chunk, sr.len - pos);
+			if (sr.sources[c]->read (&out[c][pos], sr.start + pos, n) != n) {
 				return false;
 			}
 		}
@@ -157,18 +170,19 @@ drift_curve (Analysis const& a, Note const& n, samplepos_t& f0)
 }
 
 int
-analyse (std::shared_ptr<AudioRegion> r, Analysis& a, Progress* progress)
+analyse (SourceRange const& range, Analysis& a, Progress* progress)
 {
 	using namespace Vamp;
 	using namespace Vamp::HostExt;
 
-	const float sr = r->session ().sample_rate ();
+	const float sr = range.sr;
 	a = Analysis ();
-	a.sr = sr;
-	region_master_range (r, a.origin, a.length);
+	a.sr     = sr;
+	a.origin = range.start;
+	a.length = range.len;
 
 	vector<vector<float> > ch;
-	if (!read_master (r, a.origin, a.length, ch) || ch.empty ()) {
+	if (!read_master (range, ch) || ch.empty ()) {
 		error << _("Edit Notes: could not read the audio of the region") << endmsg;
 		return -1;
 	}
@@ -947,31 +961,44 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 }
 
 int
-render_region (std::shared_ptr<AudioRegion> ar, vector<Note> const& notes, Analysis const& an,
-               vector<vector<float> >& out, Progress* progress)
+render_range (SourceRange const& range, vector<Note> const& notes, Analysis const& an,
+              vector<vector<float> >& out, Progress* progress)
 {
-	if (ar->stretch () != 1.f || ar->shift () != 1.f) {
-		error << _("Edit Notes: undo the time stretch / pitch shift of this region first") << endmsg;
-		return -1;
-	}
-	samplepos_t start;
-	samplecnt_t len;
-	region_master_range (ar, start, len);
-
 	vector<vector<float> > in;
-	if (!read_master (ar, start, len, in)) {
+	if (!read_master (range, in)) {
 		error << _("Edit Notes: could not read the audio of the region") << endmsg;
 		return -1;
 	}
-	render (in, start, ar->session ().sample_rate (), notes, an, out, progress);
+	render (in, range.start, range.sr, notes, an, out, progress);
 	if (progress && progress->cancelled ()) {
 		return -1;
 	}
-	if (out.size () != in.size () || (!out.empty () && out[0].size () != (size_t) len)) {
+	if (out.size () != in.size () || (!out.empty () && out[0].size () != (size_t) range.len)) {
 		error << _("Edit Notes: the edited audio has the wrong length") << endmsg;
 		return -1;
 	}
 	return 0;
+}
+
+bool
+can_render (std::shared_ptr<AudioRegion> ar)
+{
+	if (ar->stretch () != 1.f || ar->shift () != 1.f) {
+		error << _("Edit Notes: undo the time stretch / pitch shift of this region first") << endmsg;
+		return false;
+	}
+	return true;
+}
+
+int
+render_region (std::shared_ptr<AudioRegion> ar, vector<Note> const& notes, Analysis const& an,
+               vector<vector<float> >& out, Progress* progress)
+{
+	SourceRange range;
+	if (!can_render (ar) || !source_range (ar, range)) {
+		return -1;
+	}
+	return render_range (range, notes, an, out, progress);
 }
 
 int

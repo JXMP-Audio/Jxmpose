@@ -155,6 +155,7 @@ private:
 	int                                  _job_rv;
 	std::unique_ptr<JobProgress>         _job_progress;
 	std::shared_ptr<ARDOUR::AudioRegion> _job_region;
+	NoteEdit::SourceRange                _job_range;    ///< what the worker reads (it never touches the region)
 	NoteEdit::Analysis                   _job_an;
 	std::vector<NoteEdit::Note>          _job_notes;
 	std::vector<std::vector<float> >     _job_out;
@@ -169,6 +170,7 @@ private:
 	void stop_job ();
 	void analysis_done ();
 	void render_done ();
+	bool region_unchanged () const; ///< the region still plays the audio the job read
 	void discard_render ();
 	void draw_busy (cairo_t*, int w, int h);
 

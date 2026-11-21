@@ -26,6 +26,16 @@
 
 #include <sndfile.h>
 
+/* the plugins build as C99 (and as C++ with MSVC): no <stdatomic.h> */
+#if defined(__GNUC__) || defined(__clang__)
+#define FLAG_GET(x) __atomic_load_n (&(x), __ATOMIC_ACQUIRE)
+#define FLAG_SET(x, v) __atomic_store_n (&(x), (v), __ATOMIC_RELEASE)
+#else
+#include <intrin.h>
+#define FLAG_GET(x) (_ReadWriteBarrier (), (x))
+#define FLAG_SET(x, v) (_ReadWriteBarrier (), (x) = (v))
+#endif
+
 #include <lv2/atom/atom.h>
 #include <lv2/atom/forge.h>
 #include <lv2/atom/util.h>
@@ -71,6 +81,7 @@ enum { MSG_LOAD = 1, MSG_FREE };
 typedef struct {
 	int     type;
 	Sample* sample;
+	char    path[PATHLEN]; /* MSG_LOAD request: the file (each request carries its own copy) */
 } Msg;
 
 typedef struct {
@@ -83,11 +94,13 @@ typedef struct {
 	float    bend; /* semitones */
 	uint32_t rnd;
 
-	/* loading */
-	char queue_path[PATHLEN];
+	/* loading: `loading` is only used in the realtime thread (run () and work_response ()) */
 	bool loading;
-	bool queue_load; /* set by restore () */
 	bool inform_ui;
+	/* restore () without a worker of its own hands the path to run () here: restore () writes it only
+	 * while queue_load is clear, run () reads it only while it is set */
+	char        queue_path[PATHLEN];
+	volatile int queue_load; /* FLAG_GET / FLAG_SET */
 
 	LV2_URID_Map*        map;
 	LV2_Worker_Schedule* schedule;
@@ -248,11 +261,12 @@ schedule_load (Smp* self, const char* path, uint32_t len)
 	if (self->loading || len == 0 || len >= PATHLEN) {
 		return;
 	}
-	memcpy (self->queue_path, path, len);
-	self->queue_path[len] = '\0';
-	self->loading         = true;
-	Msg m                 = { MSG_LOAD, NULL };
-	self->schedule->schedule_work (self->schedule->handle, sizeof (m), &m);
+	Msg m = { MSG_LOAD, NULL, { 0 } };
+	memcpy (m.path, path, len);
+	m.path[len] = '\0';
+	if (self->schedule->schedule_work (self->schedule->handle, sizeof (m), &m) == LV2_WORKER_SUCCESS) {
+		self->loading = true;
+	}
 }
 
 static void
@@ -417,9 +431,9 @@ run (LV2_Handle h, uint32_t n)
 	LV2_Atom_Forge_Frame seq_frame;
 	lv2_atom_forge_sequence_head (&self->forge, &seq_frame, 0);
 
-	if (self->queue_load && !self->loading) {
-		self->queue_load = false;
-		schedule_load (self, self->queue_path, strlen (self->queue_path));
+	if (!self->loading && FLAG_GET (self->queue_load)) {
+		schedule_load (self, self->queue_path, strnlen (self->queue_path, PATHLEN - 1));
+		FLAG_SET (self->queue_load, 0);
 	}
 
 	const int chn = (int)jx_clamp (rintf (CTL (P_CHANNEL)), 0, 16);
@@ -534,7 +548,7 @@ work (LV2_Handle h, LV2_Worker_Respond_Function respond, LV2_Worker_Respond_Hand
 		free_sample (m->sample);
 		return LV2_WORKER_SUCCESS;
 	}
-	Msg r = { MSG_LOAD, load_sample (self->queue_path) };
+	Msg r = { MSG_LOAD, load_sample (m->path), { 0 } };
 	respond (handle, sizeof (r), &r);
 	return LV2_WORKER_SUCCESS;
 }
@@ -557,7 +571,7 @@ work_response (LV2_Handle h, uint32_t size, const void* data)
 		self->v[i].stage = ENV_OFF;
 	}
 	if (old) {
-		Msg f = { MSG_FREE, old };
+		Msg f = { MSG_FREE, old, { 0 } };
 		self->schedule->schedule_work (self->schedule->handle, sizeof (f), &f);
 	}
 	self->inform_ui = true;
@@ -611,14 +625,28 @@ restore (LV2_Handle h, LV2_State_Retrieve_Function retrieve, LV2_State_Handle ha
 	if (!map_path) {
 		return LV2_STATE_ERR_NO_FEATURE;
 	}
-	if (self->loading) {
-		return LV2_STATE_ERR_UNKNOWN;
-	}
 	LV2_State_Free_Path* free_path = (LV2_State_Free_Path*)jx_feature (features, LV2_STATE__freePath);
 	char* apath = map_path->absolute_path (map_path->handle, (const char*)value);
-	strncpy (self->queue_path, apath, PATHLEN - 1);
-	self->queue_path[PATHLEN - 1] = '\0';
-	self->queue_load              = true;
+	LV2_State_Status rv = LV2_STATE_SUCCESS;
+
+	/* a host may give restore () a worker of its own (Ardour does): the request then carries the path */
+	LV2_Worker_Schedule* sched = (LV2_Worker_Schedule*)jx_feature (features, LV2_WORKER__schedule);
+	const size_t         len   = strlen (apath);
+	if (len == 0 || len >= PATHLEN) {
+		rv = LV2_STATE_ERR_UNKNOWN;
+	} else if (sched) {
+		Msg m = { MSG_LOAD, NULL, { 0 } };
+		memcpy (m.path, apath, len + 1);
+		if (sched->schedule_work (sched->handle, sizeof (m), &m) != LV2_WORKER_SUCCESS) {
+			rv = LV2_STATE_ERR_UNKNOWN;
+		}
+	} else if (FLAG_GET (self->queue_load)) {
+		/* run () has not taken the previous path yet */
+		rv = LV2_STATE_ERR_UNKNOWN;
+	} else {
+		memcpy (self->queue_path, apath, len + 1);
+		FLAG_SET (self->queue_load, 1);
+	}
 	if (free_path) {
 		free_path->free_path (free_path->handle, apath);
 	} else {
@@ -626,7 +654,7 @@ restore (LV2_Handle h, LV2_State_Retrieve_Function retrieve, LV2_State_Handle ha
 		free (apath);
 #endif
 	}
-	return LV2_STATE_SUCCESS;
+	return rv;
 }
 
 /* ---- display ---- */
