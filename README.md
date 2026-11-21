@@ -135,6 +135,30 @@ Ardour project.
   one undo step (Ctrl+Z works in the window) and the notes are saved with
   the session.
 
+- **JX plugins** — ten bundled LV2 plugins (`libs/plugins/jxmp.lv2`) for
+  jobs the bundled ACE plugins don't cover. Each draws a JXMP-style display
+  (VFD windows, CRT traces, LED bars, its own colour stripe), compact in the
+  mixer strip. Its window is a JXMP hardware panel (`jx_plugin_ui.cc`): the
+  display on top, then sections with ridged knobs (cap colour by role,
+  printed scales in the parameter's units), rubber buttons and stepped
+  selectors with a VFD readout. Drag or scroll a knob (Shift: fine),
+  double-click resets it, Ctrl+middle-click learns a MIDI controller;
+  automation, presets and bypass work as usual. *Edit with generic
+  controls* still shows the plain sliders.
+
+  | Plugin | What it does |
+  |---|---|
+  | JX-MBC Multiband Compressor | 4 bands, Linkwitz-Riley crossovers that sum flat, threshold / ratio / attack / release / makeup / active / solo per band, soft knee |
+  | JX-VOC Vocoder | 4–32 bands; the voice on the input shapes the carrier on the sidechain (or internal noise); formant shift, sibilance, swap inputs |
+  | JX-PIT Pitch Shifter | two shifters (semitones, cents, level, pan) mixed with the dry signal, no latency |
+  | JX-TUN Tuner | note, cents and frequency; Correct mode pulls the pitch to the nearest note of a key and scale (13 scales) with speed and amount |
+  | JX-DNR Noise Reduction | switch on *Learn Noise* during a passage of noise only, switch it off; the noise is then subtracted (profile saved with the session) |
+  | JX-FRZ Spectral Freeze | *Hold* sustains the spectrum of what plays as a drone, *Recapture* takes a new snapshot |
+  | JX-HRM Harmonizer | MIDI notes add pitch-shifted copies of the input (up to 8 voices); feed MIDI through a sidechain MIDI input in Pin Connections |
+  | JX-SPA Spectrum Analyzer | FFT 1024–8192, window, integration, floor, slope, peak hold |
+  | JX-LOOP Looper | eight synchronised loop slots: the first recording sets the length, later ones record in sync and overdub; reverse, level, clear per slot (up to 30 s) |
+  | JX-SMP Sampler | plays one sample file from MIDI: key range, root note, velocity, ADSR, loop, start offset, voices, probability |
+
 ## Keyboard shortcuts (added or changed)
 
 | Key | Action |
@@ -162,6 +186,9 @@ Ardour project.
   its own narrow block.
 - Edit Notes analyses the whole region when it opens, which takes a moment
   on long recordings.
+- JX-PIT, JX-HRM and JX-TUN shift pitch granularly: no formant control,
+  and large shifts sound grainy on sustained sounds. JX-TUN corrects one
+  voice at a time.
 
 ## Building
 
