@@ -62,11 +62,8 @@ NoteEditorWindow::open (RegionSelection const& rs)
 				return;
 			}
 		}
+		/* the window opens at once; it analyses the audio in the background */
 		NoteEditorWindow* w = new NoteEditorWindow (r);
-		if (w->_notes.empty () && w->_an.length == 0) {
-			delete w;
-			return;
-		}
 		windows.push_back (w);
 		w->present ();
 		return; /* one region at a time */
@@ -107,6 +104,12 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	, _hover_trans (-1)
 	, _trans_base (0)
 	, _last_playhead (-1)
+	, _busy (NotBusy)
+	, _analysis_failed (false)
+	, _job_done (false)
+	, _job_rv (0)
+	, _job_started (0)
+	, _spin_phase (0)
 {
 	set_session (&r->session ());
 
@@ -159,16 +162,16 @@ NoteEditorWindow::NoteEditorWindow (std::shared_ptr<AudioRegion> r)
 	add (_vbox);
 	set_default_size (1000, 520);
 
-	if (!analyse ()) {
-		return;
-	}
 	_vbox.show_all ();
+	_status.set_text (_("Analysing the audio..."));
+	start_job (Analysing);
 
 	_timer = Timers::rapid_connect (sigc::mem_fun (*this, &NoteEditorWindow::tick));
 }
 
 NoteEditorWindow::~NoteEditorWindow ()
 {
+	stop_job ();
 	_timer.disconnect ();
 	_spin_timeout.disconnect ();
 	windows.remove (this);
@@ -177,6 +180,8 @@ NoteEditorWindow::~NoteEditorWindow ()
 void
 NoteEditorWindow::session_going_away ()
 {
+	/* the worker reads the region's sources: it has to finish before they go */
+	stop_job ();
 	ArdourWindow::session_going_away ();
 	hide ();
 	_region.reset ();
@@ -184,21 +189,90 @@ NoteEditorWindow::session_going_away ()
 	delete_when_idle (this);
 }
 
-bool
-NoteEditorWindow::analyse ()
+void
+NoteEditorWindow::start_job (Busy what)
 {
-	Gdk::Cursor wait (Gdk::WATCH);
-	if (get_window ()) {
-		get_window ()->set_cursor (wait);
+	stop_job ();
+	_busy         = what;
+	_job_done     = false;
+	_job_rv       = -1;
+	_job_started  = g_get_monotonic_time ();
+	_job_progress.reset (new JobProgress);
+	_job_region   = _region;
+	_job_out.clear ();
+
+	JobProgress*                         prog = _job_progress.get ();
+	std::shared_ptr<AudioRegion>         r    = _job_region;
+	if (what == Analysing) {
+		_toolbar.set_sensitive (false);
+		_worker = std::thread ([this, r, prog] () {
+			_job_rv   = NoteEdit::analyse (r, _job_an, prog);
+			_job_done = true;
+		});
+	} else {
+		_job_notes = _notes;
+		_worker    = std::thread ([this, r, prog] () {
+			_job_rv   = NoteEdit::render_region (r, _job_notes, _an, _job_out, prog);
+			_job_done = true;
+		});
 	}
-	const int rv = NoteEdit::analyse (_region, _an);
-	if (get_window ()) {
-		get_window ()->set_cursor ();
+	if (!_busy_timer.connected ()) {
+		_busy_timer = Glib::signal_timeout ().connect (sigc::mem_fun (*this, &NoteEditorWindow::busy_tick), 40);
 	}
-	if (rv) {
-		_an.length = 0;
-		return false;
+	_canvas.queue_draw ();
+}
+
+void
+NoteEditorWindow::stop_job ()
+{
+	if (_job_progress) {
+		_job_progress->stop ();
 	}
+	if (_worker.joinable ()) {
+		_worker.join ();
+	}
+	_busy_timer.disconnect ();
+	_busy = NotBusy;
+	_job_region.reset ();
+	_job_out.clear ();
+	_job_progress.reset ();
+}
+
+bool
+NoteEditorWindow::busy_tick ()
+{
+	_spin_phase += 0.25;
+	_canvas.queue_draw ();
+	if (!_job_done) {
+		return true;
+	}
+	_worker.join ();
+	const Busy what = _busy;
+	_busy           = NotBusy;
+	_busy_timer.disconnect ();
+	if (what == Analysing) {
+		analysis_done ();
+	} else if (what == Rendering) {
+		render_done ();
+	}
+	return false;
+}
+
+void
+NoteEditorWindow::analysis_done ()
+{
+	_toolbar.set_sensitive (true);
+	_job_progress.reset ();
+	_job_region.reset ();
+	if (_job_rv) {
+		_an.length       = 0;
+		_analysis_failed = true;
+		_status.set_text (_("The pitch analysis failed (see the log)."));
+		_canvas.queue_draw ();
+		return;
+	}
+	_an = _job_an;
+	_job_an = NoteEdit::Analysis ();
 
 	_playlist = _region->playlist ();
 	load_region_notes ();
@@ -217,7 +291,7 @@ NoteEditorWindow::analyse ()
 	}
 	_pps = std::max (40.0, std::min (400.0, 900.0 / std::max (0.5, _an.length / (double) _an.sr)));
 	update_adjustments ();
-	return true;
+	_canvas.queue_draw ();
 }
 
 void
@@ -579,6 +653,24 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 	set_rgb (cr, 0x1e2024);
 	cairo_paint (cr);
 
+	if (_an.length == 0) {
+		/* nothing analysed yet (the ring shows how far it is) or the analysis failed */
+		if (_analysis_failed) {
+			const char* t = _("The pitch analysis failed (see the log).");
+			cairo_text_extents_t te;
+			cairo_select_font_face (cr, "Barlow", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+			cairo_set_font_size (cr, 14);
+			cairo_text_extents (cr, t, &te);
+			cairo_set_source_rgba (cr, 1, 1, 1, 0.7);
+			cairo_move_to (cr, w / 2.0 - te.x_bearing - te.width / 2, h / 2.0);
+			cairo_show_text (cr, t);
+		}
+		if (_busy != NotBusy) {
+			draw_busy (cr, w, h);
+		}
+		return;
+	}
+
 	/* lanes */
 	cairo_save (cr);
 	cairo_rectangle (cr, 0, rh, w, h - rh);
@@ -772,6 +864,10 @@ NoteEditorWindow::draw (cairo_t* cr, int w, int h)
 			}
 		}
 	}
+
+	if (_busy != NotBusy) {
+		draw_busy (cr, w, h);
+	}
 }
 
 bool
@@ -789,7 +885,7 @@ bool
 NoteEditorWindow::Canvas::on_button_press_event (GdkEventButton* ev)
 {
 	grab_focus ();
-	if (ev->x < _w.key_width () || ev->y < _w.ruler_height ()) {
+	if (_w._an.length == 0 || ev->x < _w.key_width () || ev->y < _w.ruler_height ()) {
 		return false;
 	}
 	if (ev->button == 1) {
@@ -891,6 +987,9 @@ NoteEditorWindow::Canvas::on_motion_notify_event (GdkEventMotion* ev)
 {
 	_w._mouse_x = ev->x;
 	_w._mouse_y = ev->y;
+	if (_w._an.length == 0) {
+		return false;
+	}
 
 	if (_w._drag == NoDrag && get_window ()) {
 		/* show what a drag would do here */
@@ -987,7 +1086,7 @@ NoteEditorWindow::Canvas::on_motion_notify_event (GdkEventMotion* ev)
 bool
 NoteEditorWindow::Canvas::on_button_release_event (GdkEventButton* ev)
 {
-	if (ev->button != 1) {
+	if (ev->button != 1 || _w._an.length == 0) {
 		return false;
 	}
 	const Drag d = _w._drag;
@@ -1016,7 +1115,7 @@ bool
 NoteEditorWindow::Canvas::on_scroll_event (GdkEventScroll* ev)
 {
 	const bool up = ev->direction == GDK_SCROLL_UP;
-	if (ev->direction != GDK_SCROLL_UP && ev->direction != GDK_SCROLL_DOWN) {
+	if (_w._an.length == 0 || (ev->direction != GDK_SCROLL_UP && ev->direction != GDK_SCROLL_DOWN)) {
 		return false;
 	}
 	if (ev->state & GDK_CONTROL_MASK) {
@@ -1087,6 +1186,13 @@ NoteEditorWindow::shift_selected (float semitones)
 bool
 NoteEditorWindow::on_key_press_event (GdkEventKey* ev)
 {
+	if (_an.length == 0) {
+		return ArdourWindow::on_key_press_event (ev);
+	}
+	if (_drag != NoDrag) {
+		/* a split / merge / nudge in the middle of a drag would change the notes under it (their count) */
+		return true;
+	}
 	const bool alt = ev->state & GDK_MOD1_MASK;
 	switch (ev->keyval) {
 		case GDK_Up:
@@ -1120,6 +1226,11 @@ NoteEditorWindow::on_key_press_event (GdkEventKey* ev)
 		case GDK_Z:
 			/* the edits are undone in the editor; this window follows */
 			if (ev->state & GDK_CONTROL_MASK) {
+				if (_busy == Rendering && !(ev->state & GDK_SHIFT_MASK)) {
+					/* the last edit is not in the project yet: undo it here (drop the render) */
+					discard_render ();
+					return true;
+				}
 				if (ev->state & GDK_SHIFT_MASK) {
 					PublicEditor::instance ().redo (1);
 				} else {
@@ -1131,7 +1242,7 @@ NoteEditorWindow::on_key_press_event (GdkEventKey* ev)
 			break;
 		case GDK_r:
 		case GDK_R:
-			if (ev->state & GDK_CONTROL_MASK) {
+			if ((ev->state & GDK_CONTROL_MASK) && _busy != Rendering) {
 				PublicEditor::instance ().redo (1);
 				follow_undo ();
 				return true;
@@ -1149,6 +1260,7 @@ NoteEditorWindow::on_key_press_event (GdkEventKey* ev)
 			_canvas.queue_draw ();
 			return true;
 		case GDK_a:
+		case GDK_A:
 			if (ev->state & GDK_CONTROL_MASK) {
 				std::fill (_sel.begin (), _sel.end (), true);
 				_canvas.queue_draw ();
@@ -1460,25 +1572,72 @@ NoteEditorWindow::popup_menu (int i, GdkEventButton* ev)
 void
 NoteEditorWindow::apply (std::string const& what)
 {
-	if (!_session || !_region) {
+	if (!_session || !_region || _busy == Analysing || _an.length == 0) {
 		return;
 	}
-	std::shared_ptr<Playlist> pl = _region->playlist ();
-	if (!pl) {
-		follow_undo ();
-		pl = _region->playlist ();
+	if (_busy == Rendering) {
+		/* rendered with the notes as they are now once the running render is in */
+		_render_again = what;
+		return;
 	}
-	if (!pl) {
+	if (!_region->playlist ()) {
+		follow_undo ();
+	}
+	if (!_region->playlist ()) {
 		/* the region left its playlist (deleted): nothing to edit any more */
 		_status.set_text (_("This region is no longer in the project; open Edit Notes on it again."));
 		return;
 	}
+	_job_what = what;
+	start_job (Rendering);
+}
 
-	Gdk::Cursor wait (Gdk::WATCH);
-	get_window ()->set_cursor (wait);
-	NoteEdit::Filter f (*_session, _notes, _an);
-	const int rv = _region->apply (f, 0);
-	get_window ()->set_cursor ();
+void
+NoteEditorWindow::discard_render ()
+{
+	_render_again.clear ();
+	stop_job ();
+	_spin_timeout.disconnect ();
+	/* back to the notes of the region as it plays */
+	follow_undo ();
+	load_region_notes ();
+	update_status ();
+	_canvas.queue_draw ();
+}
+
+void
+NoteEditorWindow::render_done ()
+{
+	std::shared_ptr<AudioRegion> jr = _job_region;
+	_job_region.reset ();
+	_job_progress.reset ();
+	vector<NoteEdit::Note> notes;
+	notes.swap (_job_notes);
+
+	const std::string again = _render_again;
+	_render_again.clear ();
+	struct Next {
+		NoteEditorWindow& w;
+		std::string const& what;
+		~Next () { if (!what.empty ()) { w.apply (what); } }
+	} next { *this, again };
+
+	if (_job_rv != 0) {
+		_job_out.clear ();
+		_status.set_text (_("The edit could not be rendered (see the log)."));
+		return;
+	}
+
+	/* undo / redo while rendering may have taken the region out of its playlist: the result is stale then */
+	std::shared_ptr<Playlist> pl = jr ? jr->playlist () : std::shared_ptr<Playlist> ();
+	if (!_session || !pl || jr != _region) {
+		_job_out.clear ();
+		return;
+	}
+
+	NoteEdit::Filter f (*_session, notes, _an);
+	f.set_rendered (_job_out);
+	const int rv = jr->apply (f, 0);
 	if (rv != 0 || f.results.empty ()) {
 		_status.set_text (_("The edit could not be rendered (see the log)."));
 		return;
@@ -1486,11 +1645,11 @@ NoteEditorWindow::apply (std::string const& what)
 
 	std::shared_ptr<Region> nr = f.results.front ();
 	PublicEditor& ed = PublicEditor::instance ();
-	ed.begin_reversible_command (what);
+	ed.begin_reversible_command (_job_what);
 	pl->clear_changes ();
 	pl->clear_owned_changes ();
 	pl->freeze ();
-	pl->replace_region (_region, nr, _region->position ());
+	pl->replace_region (jr, nr, jr->position ());
 	pl->thaw ();
 	vector<PBD::Command*> cmds;
 	pl->rdiff (cmds);
@@ -1504,7 +1663,7 @@ NoteEditorWindow::apply (std::string const& what)
 		if (r->source (0) == nr->source (0)) {
 			if (r != nr) {
 				/* the copy does not carry the notes: they belong to the region that plays */
-				r->add_extra_xml (*NoteEdit::notes_to_xml (_notes));
+				r->add_extra_xml (*NoteEdit::notes_to_xml (notes));
 			}
 			nr = r;
 			break;
@@ -1516,12 +1675,90 @@ NoteEditorWindow::apply (std::string const& what)
 }
 
 void
+NoteEditorWindow::draw_busy (cairo_t* cr, int w, int h)
+{
+	const bool  full = _busy == Analysing;
+	const float p    = _job_progress ? std::max (0.f, std::min (1.f, _job_progress->value.load ())) : 0.f;
+
+	/* a quick render shows nothing: the ring would only flash */
+	if (!full && g_get_monotonic_time () - _job_started < 250000) {
+		return;
+	}
+
+	const double r  = full ? 34 : 11;
+	const double lw = full ? 6 : 3;
+	double       cx, cy;
+	if (full) {
+		cairo_set_source_rgba (cr, 0.07, 0.08, 0.09, 0.82);
+		cairo_rectangle (cr, 0, 0, w, h);
+		cairo_fill (cr);
+		cx = w / 2.0;
+		cy = h / 2.0 - 14;
+	} else {
+		/* a badge in the top right corner, below the ruler */
+		cairo_set_source_rgba (cr, 0.07, 0.08, 0.09, 0.85);
+		const double bw = 118, bh = 30, bx = w - bw - 8, by = ruler_height () + 6;
+		cairo_rectangle (cr, bx, by, bw, bh);
+		cairo_fill (cr);
+		cx = bx + 18;
+		cy = by + bh / 2;
+	}
+
+	/* the ring: grey track, the done part in blue, a short bright arc running round so it moves even
+	 * while the percentage stands (reading the file, the note search at the end) */
+	cairo_set_line_width (cr, lw);
+	cairo_set_line_cap (cr, CAIRO_LINE_CAP_ROUND);
+	cairo_set_source_rgba (cr, 1, 1, 1, 0.12);
+	cairo_arc (cr, cx, cy, r, 0, 2 * M_PI);
+	cairo_stroke (cr);
+	if (p > 0.001f) {
+		cairo_set_source_rgb (cr, 0x4a / 255.0, 0xa3 / 255.0, 0xff / 255.0);
+		cairo_arc (cr, cx, cy, r, -M_PI / 2, -M_PI / 2 + 2 * M_PI * p);
+		cairo_stroke (cr);
+	}
+	const double a = std::fmod (_spin_phase, 2 * M_PI);
+	cairo_set_source_rgba (cr, 1, 1, 1, 0.75);
+	cairo_arc (cr, cx, cy, r, a, a + 0.5);
+	cairo_stroke (cr);
+
+	char pct[16];
+	snprintf (pct, sizeof (pct), "%d %%", (int) std::floor (p * 100));
+	cairo_select_font_face (cr, "Barlow", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+	cairo_text_extents_t te;
+	cairo_set_source_rgb (cr, 0.92, 0.93, 0.95);
+	if (full) {
+		cairo_set_font_size (cr, 17);
+		cairo_text_extents (cr, pct, &te);
+		cairo_move_to (cr, cx - te.x_bearing - te.width / 2, cy - te.y_bearing - te.height / 2);
+		cairo_show_text (cr, pct);
+
+		/* what it is doing (the steps of NoteEdit::analyse) */
+		const char* what = p < 0.05f ? _("Reading the audio...") : p < 0.85f ? _("Detecting the pitch...") : _("Finding the notes...");
+		cairo_select_font_face (cr, "Barlow", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+		cairo_set_font_size (cr, 13);
+		cairo_text_extents (cr, what, &te);
+		cairo_set_source_rgba (cr, 1, 1, 1, 0.7);
+		cairo_move_to (cr, cx - te.x_bearing - te.width / 2, cy + r + 26);
+		cairo_show_text (cr, what);
+	} else {
+		const std::string t = string_compose (_("Rendering %1"), pct);
+		cairo_set_font_size (cr, 12);
+		cairo_text_extents (cr, t.c_str (), &te);
+		cairo_move_to (cr, cx + r + 10, cy - te.y_bearing - te.height / 2);
+		cairo_show_text (cr, t.c_str ());
+	}
+}
+
+void
 NoteEditorWindow::tick ()
 {
 	if (!_session || !is_visible ()) {
 		return;
 	}
-	follow_undo ();
+	if (_drag == NoDrag && _busy == NotBusy) {
+		/* not under a drag (it holds indices into the notes) or a render (it swaps the region itself) */
+		follow_undo ();
+	}
 	if (_sel != _synced_sel) {
 		sync_note_controls ();
 	}

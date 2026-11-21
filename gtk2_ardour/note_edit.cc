@@ -178,6 +178,11 @@ analyse (std::shared_ptr<AudioRegion> r, Analysis& a, Progress* progress)
 			mono[i] += c[i] / ch.size ();
 		}
 	}
+	/* progress: reading 0 .. 5 %, pitch tracking .. 85 %, the note search (getRemainingFeatures) .. 97 %
+	 * (the Edit Notes window names the step from these values) */
+	if (progress) {
+		progress->set_progress (0.05);
+	}
 
 	Vamp::Plugin* p = PluginLoader::getInstance ()->loadPlugin ("libardourvamppyin:pyin", sr, PluginLoader::ADAPT_ALL_SAFE);
 	if (!p) {
@@ -225,10 +230,20 @@ analyse (std::shared_ptr<AudioRegion> r, Analysis& a, Progress* progress)
 			all[f.first].insert (all[f.first].end (), f.second.begin (), f.second.end ());
 		}
 		if (progress && (pos / step) % 64 == 0) {
-			progress->set_progress (0.9 * pos / (double) a.length);
+			if (progress->cancelled ()) {
+				delete p;
+				return -1;
+			}
+			progress->set_progress (0.05 + 0.8 * pos / (double) a.length);
 		}
 	}
+	if (progress) {
+		progress->set_progress (0.85);
+	}
 	Vamp::Plugin::FeatureSet rest = p->getRemainingFeatures ();
+	if (progress) {
+		progress->set_progress (0.97);
+	}
 	for (auto& f : rest) {
 		all[f.first].insert (all[f.first].end (), f.second.begin (), f.second.end ());
 	}
@@ -780,15 +795,31 @@ glide_at (vector<Glide> const& gl, double pos, samplecnt_t sr, double& shift, do
 
 void
 render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr, vector<Note> const& notes,
-        Analysis const& an, vector<vector<float> >& out)
+        Analysis const& an, vector<vector<float> >& out, Progress* progress)
 {
 	if (raw_in.empty ()) {
 		out = raw_in;
 		return;
 	}
+	const vector<Glide> gls = glides (notes, sr);
+	/* progress: the time edit, then every glide and every re-pitched note (each one a Rubber Band run) */
+	size_t total = 1 + gls.size (), done = 0;
+	for (auto const& n : notes) {
+		total += n.pitch_edited () ? 1 : 0;
+	}
+	auto step = [&] () {
+		if (progress) {
+			progress->set_progress (++done / (float) total);
+		}
+		return !(progress && progress->cancelled ());
+	};
+
 	vector<vector<float> > in;
 	time_warp (raw_in, origin, sr, notes, in);
 	out = in;
+	if (!step ()) {
+		return;
+	}
 	const samplecnt_t len    = in[0].size ();
 	const samplecnt_t xfade  = std::max ((samplecnt_t) 32, sr / 100); /* 10 ms */
 	const samplecnt_t margin = sr / 5;                                 /* context for the stretcher */
@@ -801,7 +832,10 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 	vector<float>          joined (len, 0.f); /* weight of glides between two notes: the notes give way there */
 
 	vector<vector<float> > shifted;
-	for (auto const& g : glides (notes, sr)) {
+	for (auto const& g : gls) {
+		if (!step ()) {
+			return;
+		}
 		const samplepos_t ga = g.a - origin, gb = g.b - origin;
 		if (gb <= 0 || ga >= len || gb <= ga) {
 			continue;
@@ -840,6 +874,9 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 	for (auto const& n : notes) {
 		if (!n.pitch_edited ()) {
 			continue;
+		}
+		if (!step ()) {
+			return;
 		}
 		samplepos_t   df0 = 0;
 		vector<float> dev;
@@ -910,14 +947,38 @@ render (vector<vector<float> > const& raw_in, samplepos_t origin, samplecnt_t sr
 }
 
 int
+render_region (std::shared_ptr<AudioRegion> ar, vector<Note> const& notes, Analysis const& an,
+               vector<vector<float> >& out, Progress* progress)
+{
+	if (ar->stretch () != 1.f || ar->shift () != 1.f) {
+		error << _("Edit Notes: undo the time stretch / pitch shift of this region first") << endmsg;
+		return -1;
+	}
+	samplepos_t start;
+	samplecnt_t len;
+	region_master_range (ar, start, len);
+
+	vector<vector<float> > in;
+	if (!read_master (ar, start, len, in)) {
+		error << _("Edit Notes: could not read the audio of the region") << endmsg;
+		return -1;
+	}
+	render (in, start, ar->session ().sample_rate (), notes, an, out, progress);
+	if (progress && progress->cancelled ()) {
+		return -1;
+	}
+	if (out.size () != in.size () || (!out.empty () && out[0].size () != (size_t) len)) {
+		error << _("Edit Notes: the edited audio has the wrong length") << endmsg;
+		return -1;
+	}
+	return 0;
+}
+
+int
 Filter::run (std::shared_ptr<Region> region, Progress* progress)
 {
 	std::shared_ptr<AudioRegion> ar = std::dynamic_pointer_cast<AudioRegion> (region);
 	if (!ar) {
-		return -1;
-	}
-	if (ar->stretch () != 1.f || ar->shift () != 1.f) {
-		error << _("Edit Notes: undo the time stretch / pitch shift of this region first") << endmsg;
 		return -1;
 	}
 
@@ -925,15 +986,13 @@ Filter::run (std::shared_ptr<Region> region, Progress* progress)
 	samplecnt_t len;
 	region_master_range (ar, start, len);
 
-	vector<vector<float> > in, out;
-	if (!read_master (ar, start, len, in)) {
-		error << _("Edit Notes: could not read the audio of the region") << endmsg;
-		return -1;
+	vector<vector<float> > out;
+	out.swap (_rendered);
+	if (out.empty () || out[0].size () != (size_t) len) {
+		if (render_region (ar, _notes, _an, out)) {
+			return -1;
+		}
 	}
-	if (progress) {
-		progress->set_progress (0.1);
-	}
-	render (in, start, session.sample_rate (), _notes, _an, out);
 	if (progress) {
 		progress->set_progress (0.8);
 	}

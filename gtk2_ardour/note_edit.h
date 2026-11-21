@@ -140,7 +140,13 @@ bool glide_at (std::vector<Glide> const&, double pos, ARDOUR::samplecnt_t sr, do
  *  note edges), everything else stays untouched. Then the pitch: each note is shifted with its own constant
  *  ratio and crossfaded in over 10 ms centred on its (output) edges. */
 void render (std::vector<std::vector<float> > const& in, ARDOUR::samplepos_t origin, ARDOUR::samplecnt_t sr,
-             std::vector<Note> const&, Analysis const&, std::vector<std::vector<float> >& out);
+             std::vector<Note> const&, Analysis const&, std::vector<std::vector<float> >& out,
+             PBD::Progress* progress = 0);
+
+/** Reads the region's original audio and renders the notes into it (no session state is touched, so this
+ *  can run in a worker thread). Returns 0 on success, -1 on an error or when `progress` was cancelled. */
+int render_region (std::shared_ptr<ARDOUR::AudioRegion>, std::vector<Note> const&, Analysis const&,
+                   std::vector<std::vector<float> >& out, PBD::Progress* progress = 0);
 
 /** Makes a new region of the edited audio (new sources, master sources = the originals) */
 class Filter : public ARDOUR::Filter
@@ -148,10 +154,13 @@ class Filter : public ARDOUR::Filter
 public:
 	Filter (ARDOUR::Session& s, std::vector<Note> const& notes, Analysis const& an) : ARDOUR::Filter (s), _notes (notes), _an (an) {}
 	int run (std::shared_ptr<ARDOUR::Region>, PBD::Progress* progress = 0);
+	/** use audio already made by render_region() (taken over) instead of rendering in run() */
+	void set_rendered (std::vector<std::vector<float> >& out) { _rendered.swap (out); }
 
 private:
 	std::vector<Note> _notes;
 	Analysis          _an;
+	std::vector<std::vector<float> > _rendered;
 };
 
 } // namespace NoteEdit

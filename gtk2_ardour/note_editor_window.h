@@ -18,7 +18,9 @@
 
 #pragma once
 
+#include <atomic>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include <ytkmm/adjustment.h>
@@ -30,6 +32,8 @@
 #include <ytkmm/scrollbar.h>
 #include <ytkmm/spinbutton.h>
 #include <ytkmm/table.h>
+
+#include "pbd/progress.h"
 
 #include "ardour_window.h"
 #include "note_edit.h"
@@ -131,7 +135,43 @@ private:
 	sigc::connection _timer;
 	ARDOUR::samplepos_t _last_playhead;
 
-	bool analyse ();
+	/* work that takes a while runs in a worker thread: the analysis when the window opens (the canvas shows
+	 * a ring with the percentage and takes no edits meanwhile) and rendering an edit (a small ring in the
+	 * corner, editing goes on; a new edit made meanwhile is rendered after it) */
+	class JobProgress : public PBD::Progress
+	{
+	public:
+		JobProgress () : value (0) {}
+		std::atomic<float> value;
+		void stop () { cancel (); }
+	private:
+		void set_overall_progress (float p) { value = p; }
+	};
+	enum Busy { NotBusy, Analysing, Rendering };
+	Busy                                 _busy;
+	bool                                 _analysis_failed;
+	std::thread                          _worker;
+	std::atomic<bool>                    _job_done;
+	int                                  _job_rv;
+	std::unique_ptr<JobProgress>         _job_progress;
+	std::shared_ptr<ARDOUR::AudioRegion> _job_region;
+	NoteEdit::Analysis                   _job_an;
+	std::vector<NoteEdit::Note>          _job_notes;
+	std::vector<std::vector<float> >     _job_out;
+	std::string                          _job_what;
+	std::string                          _render_again; ///< an edit made while rendering: its undo name
+	int64_t                              _job_started;  ///< g_get_monotonic_time () at the start
+	double                               _spin_phase;
+	sigc::connection                     _busy_timer;
+
+	void start_job (Busy);
+	bool busy_tick ();
+	void stop_job ();
+	void analysis_done ();
+	void render_done ();
+	void discard_render ();
+	void draw_busy (cairo_t*, int w, int h);
+
 	void apply (std::string const& what);
 	void session_going_away ();
 
