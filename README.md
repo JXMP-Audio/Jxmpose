@@ -9,8 +9,8 @@ mixer.
 JXMPOSE is a fork of Ardour. It is **not** affiliated with or endorsed by the
 Ardour project.
 
-> **Status:** work in progress. The interface redesign lives on the
-> `jxmp-ui-phase1` branch; `master` tracks upstream Ardour.
+> **Status:** work in progress. `master` holds the current JXMPOSE code;
+> new work lands on feature branches first.
 
 ## Features (on top of Ardour)
 
@@ -210,7 +210,6 @@ is required, because the version is derived from `git describe` (GitHub
 ```sh
 git clone https://github.com/JXMP-Audio/Jxmpose.git
 cd Jxmpose
-git checkout jxmp-ui-phase1
 ./waf configure --cxx17          # --cxx17 is needed with GCC 16+
 ./waf -j$(nproc)
 gtk2_ardour/ardev                # run from the build tree
