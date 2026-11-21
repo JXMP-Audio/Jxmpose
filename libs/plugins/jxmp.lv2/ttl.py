@@ -114,8 +114,11 @@ def pit():
             ctl('cent_%s' % s.lower(), 'Shifter %s Cents' % s, 0, -100, 100, 'cent'),
             ctl('level_%s' % s.lower(), 'Shifter %s Level' % s, 0, -60, 12, 'db'),
             ctl('pan_%s' % s.lower(), 'Shifter %s Pan' % s, 0, -1, 1)]
+    # appended: older sessions keep their port indices
+    ports += [toggle('formant', 'Keep Formants'),
+              ctl('latency', 'Latency', 0, 0, 8192, out=True, latency=True)]
     return dict(sym='jx-pit', name='JX-PIT Pitch Shifter', cls='PitchPlugin',
-                comment='Two pitch shifters (semitones and cents, level and pan each) mixed with the dry signal. No latency.',
+                comment='Two pitch shifters (semitones and cents, level and pan each) mixed with the dry signal. No latency; Keep Formants (for a single voice) keeps the timbre of the voice at 15 ms latency.',
                 ports=ports)
 
 def tun():
@@ -172,7 +175,10 @@ def hrm():
         ctl('center', 'Center Note', 60, 24, 96, 'midiNote', integer=True),
         ctl('window', 'Window', 40, 20, 100, 'ms'),
         ctl('spread', 'Stereo Spread', 50, 0, 100, 'pc'),
-        ctl('glide', 'Glide', 0, 0, 500, 'ms')]
+        ctl('glide', 'Glide', 0, 0, 500, 'ms'),
+        # appended: older sessions keep their port indices
+        toggle('formant', 'Keep Formants'),
+        ctl('latency', 'Latency', 0, 0, 8192, out=True, latency=True)]
     return dict(sym='jx-hrm', name='JX-HRM Harmonizer', cls='PitchPlugin',
                 comment='MIDI played harmonizer: every held note adds the input shifted by (note - Center Note) semitones. Up to 8 voices. MIDI Channel 0 = all.',
                 required=['urid:map'], ports=ports)

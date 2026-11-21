@@ -31,6 +31,7 @@
  */
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "ardour/filter.h"
@@ -105,6 +106,8 @@ struct SourceRange {
 	ARDOUR::samplepos_t start;
 	ARDOUR::samplecnt_t len;
 	ARDOUR::samplecnt_t sr;
+	std::string         cache_file; ///< where analyse () keeps its result (empty: no cache)
+	std::string         cache_key;  ///< what the cached result was made from (sources, their length, range, rate)
 	SourceRange () : start (0), len (0), sr (0) {}
 	/** the same audio is read from both */
 	bool same_audio (SourceRange const& o) const { return sources == o.sources && start == o.start && len == o.len; }
@@ -115,8 +118,14 @@ bool source_range (std::shared_ptr<ARDOUR::AudioRegion>, SourceRange&);
 /** Reads the master sources (all channels) of the range; safe in a worker thread */
 bool read_master (SourceRange const&, std::vector<std::vector<float> >& out);
 
-/** pYIN analysis of the range (mono sum). Returns 0 on success. Safe in a worker thread. */
+/** pYIN analysis of the range (mono sum). Returns 0 on success. Safe in a worker thread.
+ *  The result is kept in the session's analysis folder: the same range of the same sources is read from
+ *  there the next time (sources do not change once written). */
 int analyse (SourceRange const&, Analysis&, PBD::Progress* progress = 0);
+
+/** The analysis cache (exposed for the tests): false if the file is missing, damaged or made from other audio */
+bool save_analysis (std::string const& file, std::string const& key, Analysis const&);
+bool load_analysis (std::string const& file, std::string const& key, Analysis&);
 
 /** Notes saved on the region (empty when it was never edited) */
 bool load_notes (std::shared_ptr<ARDOUR::Region const>, std::vector<Note>&);

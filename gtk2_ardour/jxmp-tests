@@ -1,0 +1,6 @@
+#!/bin/sh
+# runs JXMPOSE's own tests (gtk2_ardour/test/jxmp_tests.cc) with the libraries of the build tree
+cd "`dirname \"$0\"`"
+TOP=..
+. $TOP/build/gtk2_ardour/ardev_common_waf.sh
+exec $TOP/build/gtk2_ardour/jxmp-tests "$@"

@@ -18,9 +18,12 @@
 
 /* JX-PIT: two pitch shifters (semitones + cents, level and pan each) on
  * the same input, mixed with the dry signal. Granular (two crossfading
- * taps) shifting: no latency, suits doubling, harmonies and octaves. */
+ * taps) shifting: no latency, suits doubling, harmonies and octaves.
+ * Keep Formants switches to PSOLA (jxmp_psola.h): the timbre of a single
+ * voice stays, at 15 ms latency (the dry signal is delayed with it). */
 
 #include "jxmp.h"
+#include "jxmp_psola.h"
 
 #define NS 2
 
@@ -28,7 +31,9 @@ enum {
 	P_IN_L = 0, P_IN_R, P_OUT_L, P_OUT_R,
 	P_WINDOW, P_WET, P_DRY,
 	P_SHIFTER, /* 5 per shifter: enable, semitones, cents, level, pan */
-	P_LAST = P_SHIFTER + 5 * NS
+	P_FORMANT = P_SHIFTER + 5 * NS,
+	P_LATENCY,
+	P_LAST
 };
 
 enum { S_ON = 0, S_SEMI, S_CENT, S_LEVEL, S_PAN };
@@ -40,6 +45,8 @@ typedef struct {
 
 	JxDelay   dl[2];
 	JxShifter sh[NS];
+	JxPsola   ps[NS];
+	JxYin     yin;
 	float     g[NS][2]; /* smoothed left/right gain of each shifter */
 	float     g_dry;
 
@@ -65,6 +72,7 @@ instantiate (const LV2_Descriptor* d, double rate, const char* path, const LV2_F
 		free (self);
 		return NULL;
 	}
+	jx_yin_init (&self->yin, rate);
 	self->queue_draw      = jx_queue_draw_feature (features);
 	self->redraw.interval = rate / 25;
 	return self;
@@ -88,7 +96,9 @@ activate (LV2_Handle h)
 	}
 	for (int s = 0; s < NS; ++s) {
 		self->sh[s].phase = 0;
+		jx_psola_reset (&self->ps[s]);
 	}
+	jx_yin_reset (&self->yin);
 }
 
 static void
@@ -117,18 +127,33 @@ run (LV2_Handle h, uint32_t n)
 		self->v_pan[s]   = pan;
 		self->v_on[s]    = on[s];
 	}
-	const float dry = jx_db2g (*p[P_DRY]);
-	float       pk  = 0;
+	const float dry     = jx_db2g (*p[P_DRY]);
+	const bool  formant = p[P_FORMANT] && *p[P_FORMANT] > 0.5f;
+	const float lat     = formant ? (float)jx_psola_latency (self->sr) : 0.f;
+	float       pk      = 0;
+	if (p[P_LATENCY]) {
+		*p[P_LATENCY] = lat;
+	}
 
 	for (uint32_t i = 0; i < n; ++i) {
 		const float x[2] = { p[P_IN_L][i], p[P_IN_R][i] };
 		jx_delay_write (&self->dl[0], x[0]);
 		jx_delay_write (&self->dl[1], x[1]);
 		float y[2] = { 0, 0 };
+		if (formant) {
+			jx_yin_feed (&self->yin, 0.5f * (x[0] + x[1]));
+		}
 		for (int s = 0; s < NS; ++s) {
 			self->g[s][0] += tc * (tgt[s][0] - self->g[s][0]);
 			self->g[s][1] += tc * (tgt[s][1] - self->g[s][1]);
 			if (!on[s] && self->g[s][0] < 1e-5f && self->g[s][1] < 1e-5f) {
+				continue;
+			}
+			if (formant) {
+				float l, r;
+				jx_psola (&self->ps[s], self->dl, self->sr, ratio[s], self->yin.period, &l, &r);
+				y[0] += self->g[s][0] * l;
+				y[1] += self->g[s][1] * r;
 				continue;
 			}
 			/* both channels read at the same phase */
@@ -137,8 +162,11 @@ run (LV2_Handle h, uint32_t n)
 			y[1] += self->g[s][1] * jx_shift (&self->sh[s], &self->dl[1], ratio[s], win);
 		}
 		self->g_dry += tc * (dry - self->g_dry);
-		p[P_OUT_L][i] = y[0] + self->g_dry * x[0];
-		p[P_OUT_R][i] = y[1] + self->g_dry * x[1];
+		/* with formants kept the shifted voices are late by the latency: the dry signal waits for them */
+		const float dl = formant ? jx_delay_read (&self->dl[0], lat) : x[0];
+		const float dr = formant ? jx_delay_read (&self->dl[1], lat) : x[1];
+		p[P_OUT_L][i] = y[0] + self->g_dry * dl;
+		p[P_OUT_R][i] = y[1] + self->g_dry * dr;
 		pk            = fmaxf (pk, fmaxf (fabsf (y[0]), fabsf (y[1])));
 	}
 	self->v_peak = pk;

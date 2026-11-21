@@ -35,6 +35,9 @@
  * port that matches "stream-capture-ports" as soon as the session runs
  * or the capture shows up (sharing started later). Turning the option
  * off removes these connections again.
+ *
+ * It also connects the Click to Master's outputs when the click has no
+ * output of its own (no physical outputs reported under PipeWire).
  */
 class StreamLink : public ARDOUR::SessionHandlePtr, public PBD::ScopedConnectionList, public sigc::trackable
 {
@@ -51,8 +54,10 @@ private:
 	bool update ();
 	void connect ();
 	void disconnect ();
+	void click_follows_master ();
 
 	sigc::connection          _timeout;
+	PBD::ScopedConnectionList _io_connections;
 };
 
 #endif

@@ -18,12 +18,19 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <map>
+#include <sstream>
+
+#include <glib.h>
+#include <glib/gstdio.h>
+#include <glibmm/miscutils.h>
 
 #include <rubberband/RubberBandStretcher.h>
 #include <vamp-hostsdk/PluginLoader.h>
 
+#include "pbd/compose.h"
 #include "pbd/error.h"
 #include "pbd/progress.h"
 #include "pbd/xml++.h"
@@ -61,14 +68,23 @@ source_range (std::shared_ptr<AudioRegion> r, SourceRange& sr)
 	sr = SourceRange ();
 	region_master_range (r, sr.start, sr.len);
 	sr.sr = r->session ().sample_rate ();
+	std::stringstream key;
+	key << "v1 " << sr.start << " " << sr.len << " " << sr.sr;
 	for (auto const& s : r->master_sources ()) {
 		std::shared_ptr<AudioSource> as = std::dynamic_pointer_cast<AudioSource> (s);
 		if (!as) {
 			return false;
 		}
 		sr.sources.push_back (as);
+		key << " " << as->id ().to_s () << ":" << as->length ().samples ();
 	}
-	return !sr.sources.empty ();
+	if (sr.sources.empty ()) {
+		return false;
+	}
+	sr.cache_key  = key.str ();
+	sr.cache_file = Glib::build_filename (r->session ().analysis_dir (),
+	                                      string_compose ("editnotes-%1-%2-%3.bin", sr.sources.front ()->id ().to_s (), sr.start, sr.len));
+	return true;
 }
 
 bool
@@ -169,8 +185,156 @@ drift_curve (Analysis const& a, Note const& n, samplepos_t& f0)
 	return dev;
 }
 
+/* ---- the analysis cache: a small binary file, "JXNE" + version, the key, the analysis ---- */
+
+namespace {
+const char     cache_magic[4] = { 'J', 'X', 'N', 'E' };
+const uint32_t cache_version  = 1;
+
+template <typename T>
+void
+put (std::string& b, T v)
+{
+	b.append ((const char*) &v, sizeof (T));
+}
+
+struct Reader {
+	const char* p;
+	const char* e;
+	template <typename T>
+	bool get (T& v)
+	{
+		if ((size_t) (e - p) < sizeof (T)) {
+			return false;
+		}
+		memcpy (&v, p, sizeof (T));
+		p += sizeof (T);
+		return true;
+	}
+	bool get_floats (vector<float>& v, uint64_t n)
+	{
+		if (n > (uint64_t) (e - p) / sizeof (float)) {
+			return false;
+		}
+		v.resize (n);
+		if (n) {
+			memcpy (&v[0], p, n * sizeof (float));
+		}
+		p += n * sizeof (float);
+		return true;
+	}
+};
+} // namespace
+
+bool
+save_analysis (std::string const& file, std::string const& key, Analysis const& a)
+{
+	std::string b;
+	b.append (cache_magic, 4);
+	put<uint32_t> (b, cache_version);
+	put<uint32_t> (b, key.size ());
+	b.append (key);
+	put<int64_t> (b, a.sr);
+	put<int64_t> (b, a.hop);
+	put<int64_t> (b, a.origin);
+	put<int64_t> (b, a.length);
+	put<uint64_t> (b, a.midi.size ());
+	b.append ((const char*) a.midi.data (), a.midi.size () * sizeof (float));
+	put<uint64_t> (b, a.rms.size ());
+	b.append ((const char*) a.rms.data (), a.rms.size () * sizeof (float));
+	put<uint64_t> (b, a.notes.size ());
+	for (auto const& n : a.notes) {
+		put<int64_t> (b, n.start);
+		put<int64_t> (b, n.end);
+		put<int64_t> (b, n.ostart);
+		put<int64_t> (b, n.oend);
+		put<float> (b, n.pitch);
+		put<float> (b, n.shift);
+		put<float> (b, n.drift);
+		put<float> (b, n.gain);
+		put<float> (b, n.formant);
+		put<float> (b, n.trans);
+	}
+	/* g_file_set_contents () writes a temporary file and renames it: never a half written cache */
+	GError* err = 0;
+	if (!g_file_set_contents (file.c_str (), b.data (), b.size (), &err)) {
+		if (err) {
+			g_error_free (err);
+		}
+		return false;
+	}
+	return true;
+}
+
+bool
+load_analysis (std::string const& file, std::string const& key, Analysis& a)
+{
+	gchar* data = 0;
+	gsize  size = 0;
+	if (!g_file_get_contents (file.c_str (), &data, &size, 0)) {
+		return false;
+	}
+	Reader   r = { data, data + size };
+	bool     ok = size >= 4 && !memcmp (data, cache_magic, 4);
+	uint32_t ver = 0, klen = 0;
+	r.p += 4;
+	ok = ok && r.get (ver) && ver == cache_version && r.get (klen) && klen == key.size () && (size_t) (r.e - r.p) >= klen
+	     && !memcmp (r.p, key.data (), klen);
+	Analysis an;
+	if (ok) {
+		r.p += klen;
+		int64_t  sr, hop, origin, length;
+		uint64_t n;
+		ok = r.get (sr) && r.get (hop) && r.get (origin) && r.get (length) && hop > 0 && length >= 0;
+		an.sr     = sr;
+		an.hop    = hop;
+		an.origin = origin;
+		an.length = length;
+		ok = ok && r.get (n) && r.get_floats (an.midi, n) && r.get (n) && r.get_floats (an.rms, n) && r.get (n);
+		for (uint64_t i = 0; ok && i < n; ++i) {
+			Note    note;
+			int64_t s, e, os, oe;
+			ok = r.get (s) && r.get (e) && r.get (os) && r.get (oe) && r.get (note.pitch) && r.get (note.shift)
+			     && r.get (note.drift) && r.get (note.gain) && r.get (note.formant) && r.get (note.trans);
+			note.start  = s;
+			note.end    = e;
+			note.ostart = os;
+			note.oend   = oe;
+			if (ok) {
+				an.notes.push_back (note);
+			}
+		}
+		ok = ok && r.p == r.e;
+	}
+	g_free (data);
+	if (ok) {
+		a = an;
+	}
+	return ok;
+}
+
+static int analyse_audio (SourceRange const& range, Analysis& a, Progress* progress);
+
 int
 analyse (SourceRange const& range, Analysis& a, Progress* progress)
+{
+	if (!range.cache_file.empty () && load_analysis (range.cache_file, range.cache_key, a)) {
+		if (progress) {
+			progress->set_progress (1.0);
+		}
+		return 0;
+	}
+	const int rv = analyse_audio (range, a, progress);
+	if (rv == 0 && !range.cache_file.empty () && !(progress && progress->cancelled ())) {
+		if (!save_analysis (range.cache_file, range.cache_key, a)) {
+			warning << string_compose (_("Edit Notes: could not save the analysis to %1"), range.cache_file) << endmsg;
+		}
+	}
+	return rv;
+}
+
+static int
+analyse_audio (SourceRange const& range, Analysis& a, Progress* progress)
 {
 	using namespace Vamp;
 	using namespace Vamp::HostExt;

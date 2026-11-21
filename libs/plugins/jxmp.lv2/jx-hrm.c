@@ -22,6 +22,7 @@
  * lower ones left (Spread). */
 
 #include "jxmp.h"
+#include "jxmp_psola.h"
 
 #include <lv2/atom/atom.h>
 #include <lv2/atom/util.h>
@@ -31,6 +32,7 @@
 enum {
 	P_MIDI = 0, P_IN_L, P_IN_R, P_OUT_L, P_OUT_R,
 	P_WET, P_DRY, P_GAIN, P_VOICES, P_ATTACK, P_RELEASE, P_CHANNEL, P_CENTER, P_WINDOW, P_SPREAD, P_GLIDE,
+	P_FORMANT, P_LATENCY, /* appended later: older sessions keep their port indices */
 	P_LAST
 };
 
@@ -44,6 +46,7 @@ typedef struct {
 	float     vel;
 	uint32_t  age;
 	JxShifter sh;
+	JxPsola   ps;
 } Voice;
 
 typedef struct {
@@ -51,6 +54,7 @@ typedef struct {
 	float  sr;
 
 	JxDelay  dl[2];
+	JxYin    yin;
 	Voice    v[NV];
 	uint32_t clock;
 	float    g_wet, g_dry, g_in;
@@ -85,6 +89,7 @@ instantiate (const LV2_Descriptor* d, double rate, const char* path, const LV2_F
 		free (self);
 		return NULL;
 	}
+	jx_yin_init (&self->yin, rate);
 	self->midi_MidiEvent  = map->map (map->handle, LV2_MIDI__MidiEvent);
 	self->queue_draw      = jx_queue_draw_feature (features);
 	self->redraw.interval = rate / 25;
@@ -115,7 +120,9 @@ activate (LV2_Handle h)
 		self->v[i].note = -1;
 		self->v[i].gate = false;
 		self->v[i].env  = 0;
+		jx_psola_reset (&self->v[i].ps);
 	}
+	jx_yin_reset (&self->yin);
 }
 
 static void
@@ -157,6 +164,7 @@ note_on (Hrm* self, int note, int vel, int max_voices, int center)
 	if (v->env < 1e-4f) {
 		v->st       = note - center; /* no glide from silence */
 		v->sh.phase = 0;
+		jx_psola_reset (&v->ps);
 	}
 	v->note = note;
 	v->gate = true;
@@ -190,6 +198,8 @@ process (Hrm* self, uint32_t from, uint32_t to)
 	const float wet    = jx_db2g (CTL (P_WET));
 	const float dry    = jx_db2g (CTL (P_DRY));
 	const float gin    = jx_db2g (CTL (P_GAIN));
+	const bool  formant = self->p[P_FORMANT] && CTL (P_FORMANT) > 0.5f;
+	const float lat     = formant ? (float)jx_psola_latency (self->sr) : 0.f;
 
 	float pan_l[NV], pan_r[NV], tgt[NV];
 	for (int i = 0; i < NV; ++i) {
@@ -212,6 +222,9 @@ process (Hrm* self, uint32_t from, uint32_t to)
 		const float x[2] = { in[0][s] * self->g_in, in[1][s] * self->g_in };
 		jx_delay_write (&self->dl[0], x[0]);
 		jx_delay_write (&self->dl[1], x[1]);
+		if (formant) {
+			jx_yin_feed (&self->yin, 0.5f * (x[0] + x[1]));
+		}
 		float y[2] = { 0, 0 };
 		for (int i = 0; i < NV; ++i) {
 			Voice* v = &self->v[i];
@@ -226,12 +239,22 @@ process (Hrm* self, uint32_t from, uint32_t to)
 			}
 			v->st += glide * (tgt[i] - v->st);
 			const float ratio = exp2f (v->st / 12.f);
+			if (formant) {
+				float l, r;
+				jx_psola (&v->ps, self->dl, self->sr, ratio, self->yin.period, &l, &r);
+				y[0] += v->env * pan_l[i] * l;
+				y[1] += v->env * pan_r[i] * r;
+				continue;
+			}
 			JxShifter   r     = v->sh;
 			y[0] += v->env * pan_l[i] * jx_shift (&r, &self->dl[0], ratio, win);
 			y[1] += v->env * pan_r[i] * jx_shift (&v->sh, &self->dl[1], ratio, win);
 		}
-		out[0][s] = self->g_wet * y[0] + self->g_dry * x[0];
-		out[1][s] = self->g_wet * y[1] + self->g_dry * x[1];
+		/* with formants kept the voices are late by the latency: the dry signal waits for them */
+		const float dl = formant ? jx_delay_read (&self->dl[0], lat) : x[0];
+		const float dr = formant ? jx_delay_read (&self->dl[1], lat) : x[1];
+		out[0][s] = self->g_wet * y[0] + self->g_dry * dl;
+		out[1][s] = self->g_wet * y[1] + self->g_dry * dr;
 	}
 }
 
@@ -244,6 +267,9 @@ run (LV2_Handle h, uint32_t n)
 	const int chn        = (int)jx_clamp (rintf (CTL (P_CHANNEL)), 0, 16);
 	const int center     = (int)rintf (CTL (P_CENTER));
 	uint32_t  pos        = 0;
+	if (self->p[P_LATENCY]) {
+		*(float*)self->p[P_LATENCY] = (self->p[P_FORMANT] && CTL (P_FORMANT) > 0.5f) ? (float)jx_psola_latency (self->sr) : 0.f;
+	}
 
 	const LV2_Atom_Sequence* seq = (const LV2_Atom_Sequence*)self->p[P_MIDI];
 	LV2_ATOM_SEQUENCE_FOREACH (seq, ev)

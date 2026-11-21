@@ -59,6 +59,16 @@ void
 StreamLink::set_session (Session* s)
 {
 	SessionHandlePtr::set_session (s);
+	_io_connections.drop_connections ();
+	if (s) {
+		/* the click follows Master's outputs (see click_follows_master): wake up when either is reconnected */
+		if (s->master_out ()) {
+			s->master_out ()->output ()->changed.connect (_io_connections, invalidator (*this), std::bind (&StreamLink::queue_update, this), gui_context ());
+		}
+		if (s->click_io ()) {
+			s->click_io ()->changed.connect (_io_connections, invalidator (*this), std::bind (&StreamLink::queue_update, this), gui_context ());
+		}
+	}
 	queue_update ();
 }
 
@@ -87,6 +97,7 @@ StreamLink::update ()
 	} else {
 		disconnect ();
 	}
+	click_follows_master ();
 	return false;
 }
 
@@ -212,6 +223,72 @@ StreamLink::disconnect ()
 			if (std::regex_search (o, re)) {
 				p->disconnect (o);
 			}
+		}
+	}
+}
+
+/** The click plays where Master plays when it has no output of its own.
+ *
+ * At session start Ardour connects the click to the first two physical
+ * outputs. A JACK client of PipeWire may see none (the interface is not
+ * reported as physical), so the click stayed silent until it was
+ * connected by hand. Master's outputs are known then (restored with the
+ * session or made by the user / the session manager), so the click goes
+ * there too. Connections to the stream capture do not count as outputs.
+ */
+void
+StreamLink::click_follows_master ()
+{
+	if (!_session || !_session->master_out () || !_session->click_io () || !AudioEngine::instance ()->running ()) {
+		return;
+	}
+
+	std::regex capture;
+	bool       have_capture = false;
+	try {
+		capture      = std::regex (Config->get_stream_capture_ports ());
+		have_capture = !Config->get_stream_capture_ports ().empty ();
+	} catch (...) {
+	}
+	string const own = AudioEngine::instance ()->my_name () + ":";
+
+	/* where a port plays, leaving out the stream capture and our own ports */
+	auto outputs = [&] (std::shared_ptr<Port> const& p) {
+		vector<string> c, out;
+		if (p) {
+			p->get_connections (c);
+		}
+		for (auto const& o : c) {
+			if (o.compare (0, own.size (), own) == 0 || o.find (':') == string::npos) {
+				continue;
+			}
+			if (have_capture && std::regex_search (o, capture)) {
+				continue;
+			}
+			out.push_back (o);
+		}
+		return out;
+	};
+
+	vector<std::shared_ptr<Port>> master, click;
+	our_ports (_session, master, click);
+
+	for (auto const& c : click) {
+		if (!outputs (c).empty ()) {
+			return; /* connected by the user (or the physical outputs worked) */
+		}
+	}
+	vector<string> dst;
+	for (auto const& m : master) {
+		for (auto const& o : outputs (m)) {
+			if (std::find (dst.begin (), dst.end (), o) == dst.end ()) {
+				dst.push_back (o);
+			}
+		}
+	}
+	for (auto const& c : click) {
+		for (auto const& o : dst) {
+			link (c, o);
 		}
 	}
 }

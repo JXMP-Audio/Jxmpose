@@ -235,6 +235,7 @@ gtk2_ardour_sources = [
         'pianoroll_midi_view.cc',
         'chord_lane.cc',
         'chord_pads.cc',
+        'chord_theory.cc',
         'midi_editor_panel.cc',
         'pianoroll_window.cc',
         'score_view.cc',
@@ -737,6 +738,21 @@ def build(bld):
 
     if bld.is_defined('NEED_INTL'):
         obj.linkflags.append ('-lintl')
+
+    # JXMPOSE's own tests (Chord Pads theory, Edit Notes): no test framework needed, not installed.
+    # Run them with gtk2_ardour/jxmp-tests
+    if bld.env['build_target'] != 'mingw' and bld.env['build_target'] != 'msvc' and sys.platform != 'darwin':
+        tst = bld (features = 'cxx cxxprogram')
+        tst.source       = [ 'test/jxmp_tests.cc', 'chord_theory.cc', 'note_edit.cc' ]
+        tst.target       = 'jxmp-tests'
+        tst.includes     = [ '.', '../libs' ]
+        tst.use          = [ 'libpbd', 'libardour', 'libtemporal', 'libevoral', 'libmidipp' ]
+        tst.uselib       = 'GLIBMM GTHREAD XML RUBBERBAND VAMPSDK VAMPHOSTSDK SNDFILE'
+        tst.defines      = [ 'PACKAGE="' + I18N_PACKAGE + '"' ]
+        tst.install_path = None
+        if bld.is_defined('LXVST_SUPPORT'):
+            tst.source  += [ '../libs/ardour/test/dummy_lxvst.cc' ]
+            tst.defines += [ 'LXVST_SUPPORT' ]
 
     if bld.is_defined('WINDOWS_VST_SUPPORT'):
         obj.source += [ 'windows_vst_plugin_ui.cc' ]

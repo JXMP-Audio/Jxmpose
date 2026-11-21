@@ -203,7 +203,7 @@ layouts ()
 		JxLayout m { "urn:jxmp:jx-pit", 0x3FB6E0, {}, 0 };
 		m.rows.push_back ({ { "SHIFTER A", { button ("on_a", "ON", C_PLAY), step ("semi_a", "SEMITONES", C_MAIN), knob ("cent_a", "CENTS"), knob ("level_a", "LEVEL"), small ("pan_a", "PAN") } } });
 		m.rows.push_back ({ { "SHIFTER B", { button ("on_b", "ON", C_PLAY), step ("semi_b", "SEMITONES", C_MAIN), knob ("cent_b", "CENTS"), knob ("level_b", "LEVEL"), small ("pan_b", "PAN") } } });
-		m.rows.push_back ({ { "MIX", { knob ("wet", "WET"), knob ("dry", "DRY"), knob ("window", "WINDOW", C_GREY) } } });
+		m.rows.push_back ({ { "MIX", { knob ("wet", "WET"), knob ("dry", "DRY"), knob ("window", "WINDOW", C_GREY), button ("formant", "FORMANTS", C_MAIN) } } });
 		l.push_back (m);
 	}
 	{ /* JX-TUN */
@@ -230,7 +230,8 @@ layouts ()
 		JxLayout m { "urn:jxmp:jx-hrm", 0xD65BB5, {}, 0 };
 		m.rows.push_back ({ { "VOICES", { step ("center", "CENTER", C_MAIN), step ("voices", "VOICES"), step ("channel", "MIDI CH"), knob ("spread", "SPREAD", C_GREY) } },
 		                    { "MIX", { knob ("gain", "INPUT"), knob ("wet", "WET"), knob ("dry", "DRY") } } });
-		m.rows.push_back ({ { "ENVELOPE", { knob ("attack", "ATTACK"), knob ("release", "RELEASE"), knob ("glide", "GLIDE"), knob ("window", "WINDOW", C_GREY) } } });
+		m.rows.push_back ({ { "ENVELOPE", { knob ("attack", "ATTACK"), knob ("release", "RELEASE"), knob ("glide", "GLIDE"), knob ("window", "WINDOW", C_GREY) } },
+		                    { "VOICE", { button ("formant", "FORMANTS", C_MAIN) } } });
 		l.push_back (m);
 	}
 	{ /* JX-SPA */

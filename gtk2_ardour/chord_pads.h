@@ -30,6 +30,8 @@
 #include "widgets/ardour_button.h"
 #include "widgets/ardour_dropdown.h"
 
+#include "chord_theory.h"
+
 namespace ARDOUR {
 	class MidiTrack;
 }
@@ -74,16 +76,9 @@ public:
 	/** notes and name of dragged chord data; false if it is not a chord */
 	bool drag_chord (std::string const& data, std::vector<uint8_t>& notes, std::string& name) const;
 
-	static const int n_pads = 16; ///< 9 in the lower row, 7 above them (like Cubase)
+	static const int n_pads = ChordTheory::n_key_chords; ///< 9 in the lower row, 7 above them (like Cubase)
 
-	struct Chord {
-		int root;      ///< 0 = C .. 11 = B
-		int type;      ///< index into the chord types
-		int tension;   ///< index into the tensions, 0 = none
-		int bass;      ///< -1 = the root, else 0 .. 11
-		int inversion; ///< 0 = root position
-		int octave;    ///< offset from the octave of middle C
-	};
+	typedef ChordTheory::Chord Chord;
 	static std::vector<int> chord_pitches (Chord const&);
 	static std::string      chord_name (Chord const&);
 	/** the name as pango markup, Cubase style (B\u266dmin<sup>7</sup>) */
