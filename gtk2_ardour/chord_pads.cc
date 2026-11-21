@@ -308,7 +308,7 @@ public:
 	PadGrid (ChordPads& o) : _o (o), _hover (-1), _press (-1)
 	{
 		add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
-		set_size_request (420, 140);
+		set_size_request (420, 150);
 		std::vector<Gtk::TargetEntry> targets;
 		targets.push_back (Gtk::TargetEntry (drag_target (), Gtk::TARGET_SAME_APP));
 		drag_source_set (targets, Gdk::BUTTON1_MASK, Gdk::ACTION_COPY);
@@ -374,10 +374,10 @@ protected:
 				set_rgb (cr, fit_colour (lvl));
 				cairo_fill (cr);
 			}
-			markup (cr, *this, chord_markup (c), "Sans 10", x + w / 2, y + h / 2, 0xf2f4f6);
+			markup (cr, *this, chord_markup (c), "Sans Bold 12", x + w / 2, y + h / 2, 0xffffff);
 			std::string const deg = degree (c);
 			if (!deg.empty ()) {
-				text (cr, *this, deg, "Sans 6", x + 4, y + 8, sel ? 0xe4e8ee : 0x8c939b, 0.0);
+				text (cr, *this, deg, "Sans 8", x + 5, y + 10, sel ? 0xffffff : 0xaab1ba, 0.0);
 			}
 		}
 		cairo_destroy (cr);
@@ -531,7 +531,7 @@ private:
 class ChordPads::ChordKeys : public Gtk::DrawingArea
 {
 public:
-	ChordKeys () { set_size_request (-1, 30); }
+	ChordKeys () { set_size_request (-1, 62); }
 	void set (std::vector<int> const& notes, bool with_bass)
 	{
 		_notes = notes;
@@ -542,13 +542,15 @@ public:
 protected:
 	bool on_expose_event (GdkEventExpose*)
 	{
-		cairo_t* cr = gdk_cairo_create (get_window ()->gobj ());
-		int      lo = 36, hi = 84; /* C2 .. B5 */
+		cairo_t*     cr    = gdk_cairo_create (get_window ()->gobj ());
+		const double names = 18; /* the row of note names under the keys */
+		const double kh    = get_height () - names;
+		int          lo = 36, hi = 84; /* C2 .. B5 */
 		if (!_notes.empty ()) {
 			lo = std::min (lo, _notes.front () / 12 * 12);
 			hi = std::max (hi, (_notes.back () / 12 + 1) * 12);
 		}
-		draw_keys (cr, 0, 0, get_width (), get_height () - 1, lo, hi, [this] (int n) -> uint32_t {
+		draw_keys (cr, 0, 0, get_width (), kh, lo, hi, [this] (int n) -> uint32_t {
 			for (size_t i = 0; i < _notes.size (); ++i) {
 				if (_notes[i] == n) {
 					return (i == 0 && _bass) ? orange : blue;
@@ -556,17 +558,37 @@ protected:
 			}
 			return 0;
 		});
-		/* where middle C is */
-		int whites = 0;
-		for (int n = lo; n < 60; ++n) {
-			whites += is_black (n) ? 0 : 1;
-		}
 		int all = 0;
 		for (int n = lo; n < hi; ++n) {
 			all += is_black (n) ? 0 : 1;
 		}
 		const double kw = get_width () / (double) std::max (1, all);
-		text (cr, *this, "C4", "Sans 6", whites * kw + kw / 2, get_height () - 7, 0x6c737c);
+		/* the centre of a key */
+		auto key_x = [&] (int note) {
+			int wi = 0;
+			for (int n = lo; n < note; ++n) {
+				wi += is_black (n) ? 0 : 1;
+			}
+			return is_black (note) ? wi * kw : wi * kw + kw / 2;
+		};
+		/* the octaves, on their C keys */
+		for (int n = lo; n < hi; n += 12) {
+			if (n % 12 == 0) {
+				text (cr, *this, "C" + std::to_string (n / 12 - 1), "Sans 7", key_x (n), kh - 7, n == 60 ? 0x30343a : 0x7c838c);
+			}
+		}
+		/* the notes of the chord, named under the keys */
+		for (size_t i = 0; i < _notes.size (); ++i) {
+			const int   n  = _notes[i];
+			std::string nm = std::string (pc_name (n % 12)) + std::to_string (n / 12 - 1);
+			const double x = key_x (n);
+			set_rgb (cr, (i == 0 && _bass) ? orange : blue);
+			cairo_move_to (cr, x, kh + 1);
+			cairo_line_to (cr, x, kh + 4);
+			cairo_set_line_width (cr, 1.5);
+			cairo_stroke (cr);
+			text (cr, *this, nm, "Sans Bold 9", x, kh + names / 2 + 2, (i == 0 && _bass) ? orange : 0xe6eaef);
+		}
 		cairo_destroy (cr);
 		return true;
 	}
@@ -588,7 +610,7 @@ public:
 	Circle (ChordPads& o) : _o (o), _hover (-1), _press (-1)
 	{
 		add_events (Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
-		set_size_request (300, 196);
+		set_size_request (360, 250);
 		std::vector<Gtk::TargetEntry> targets;
 		targets.push_back (Gtk::TargetEntry (drag_target (), Gtk::TARGET_SAME_APP));
 		drag_source_set (targets, Gdk::BUTTON1_MASK, Gdk::ACTION_COPY);
@@ -623,12 +645,12 @@ protected:
 			Box b;
 			Glib::RefPtr<Pango::Layout> l = create_pango_layout ("");
 			l->set_markup (chord_markup (c, spelling));
-			Pango::FontDescription fd ("Sans 6.5");
+			Pango::FontDescription fd ("Sans Bold 8");
 			l->set_font_description (fd);
 			int tw, th;
 			l->get_pixel_size (tw, th);
-			b.w = std::max (26, tw + 8);
-			b.h = 13;
+			b.w = std::max (30, tw + 10);
+			b.h = 17;
 			b.x = cx + ex * std::cos (a) - b.w / 2;
 			b.y = cy + ey * std::sin (a) - b.h / 2;
 			b.c = c;
@@ -693,8 +715,8 @@ protected:
 		}
 		/* the reference in the middle */
 		Box mid;
-		mid.w = 44;
-		mid.h = 14;
+		mid.w = 52;
+		mid.h = 18;
 		mid.x = cx - mid.w / 2;
 		mid.y = cy - mid.h / 2;
 		mid.c = ref;
@@ -711,7 +733,7 @@ protected:
 		set_rgb (cr, 0x7a7f87, 0.8);
 		cairo_set_line_width (cr, 1);
 		cairo_stroke (cr);
-		markup (cr, *this, chord_markup (b.c, b.spelling), "Sans 6.5", b.x + b.w / 2, b.y + b.h / 2, 0xf2f4f6);
+		markup (cr, *this, chord_markup (b.c, b.spelling), "Sans Bold 8", b.x + b.w / 2, b.y + b.h / 2, 0xffffff);
 		/* the triangle: how well it follows; the degree in the key next to it */
 		const double tx = b.x + b.w / 2, ty = b.y + b.h + 1;
 		cairo_move_to (cr, tx - 4, ty);
@@ -722,7 +744,7 @@ protected:
 		cairo_fill (cr);
 		std::string const deg = degree (b.c);
 		if (!deg.empty () && deg[0] != 'b' && deg[0] != '#') {
-			text (cr, *this, deg, "Sans 5.5", tx + 6, ty + 3, 0xc8ccd2, 0.0);
+			text (cr, *this, deg, "Sans 7", tx + 6, ty + 3, 0xd8dce2, 0.0);
 		}
 	}
 
@@ -892,7 +914,7 @@ ChordPads::ChordPads ()
 	_insert_button.signal_clicked.connect ([this] () { InsertRequested (_sel); });
 	top->pack_start (_insert_button, false, false);
 	Gtk::Label* hint = manage (new Gtk::Label ());
-	hint->set_markup (std::string ("<span size='small' foreground='#9aa3ad'>")
+	hint->set_markup (std::string ("<span foreground='#b4bbc4'>")
 	                  + _("Hold a pad to hear it · drag it onto the notes to write it, or a chord of the circle onto a pad") + "</span>");
 	top->pack_end (*hint, false, false, 4);
 
@@ -1009,11 +1031,11 @@ ChordPads::ChordPads ()
 		Gtk::VBox* cv = manage (new Gtk::VBox ());
 		cv->set_spacing (2);
 		Gtk::Label* ct = manage (new Gtk::Label ());
-		ct->set_markup (std::string ("<span size='small' foreground='#c8ccd2'>") + _("Circle of Fifths") + "</span>");
+		ct->set_markup (std::string ("<span weight='bold' foreground='#d8dce2'>") + _("Circle of Fifths") + "</span>");
 		cv->pack_start (*ct, false, false);
 		cv->pack_start (*_circle, true, true);
 		Gtk::Label* legend = manage (new Gtk::Label ());
-		legend->set_markup (std::string ("<span size='x-small'><span foreground='#34b360'>\u25cf</span> ") + _("best")
+		legend->set_markup (std::string ("<span size='small'><span foreground='#34b360'>\u25cf</span> ") + _("best")
 		                    + "  <span foreground='#d2b33a'>\u25cf</span> " + _("good")
 		                    + "  <span foreground='#d77a34'>\u25cf</span> " + _("possible") + "</span>");
 		cv->pack_start (*legend, false, false);
